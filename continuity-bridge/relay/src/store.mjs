@@ -40,6 +40,29 @@ export class DurableStore {
     return result;
   }
 
+  recover() {
+    const restore = async () => {
+      if (this.unavailableError === undefined) return true;
+      try {
+        const loaded = await loadState(this.statePath);
+        if (loaded === undefined) throw new StateError(new Error("persisted state disappeared during recovery"));
+        const prepared = prepareState(loaded);
+        await this.writeState(this.statePath, prepared.state);
+        this.state = prepared.state;
+        this.unavailableError = undefined;
+        this.signal("android");
+        this.signal("macos");
+        return true;
+      } catch (error) {
+        this.unavailableError = error instanceof StateError ? error : new StateError(error);
+        return false;
+      }
+    };
+    const result = this.queue.then(restore, restore);
+    this.queue = result.catch(() => undefined);
+    return result;
+  }
+
   prune(state) {
     const before = state.retained.length;
     state.retained = state.retained.filter((entry) => entry.event.kind !== "android.notification" || entry.deadlineMs > this.clock.now());

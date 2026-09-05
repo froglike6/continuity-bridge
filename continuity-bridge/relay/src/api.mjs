@@ -130,6 +130,12 @@ export function createHandler(context) {
         return send(response, 200, { protocolVersion: 1, status: "ok", serverEpoch: context.store.serverEpoch,
           tailCursor: context.store.tailCursor });
       }
+      if (request.method === "GET" && url.pathname === "/v1/ready") {
+        const ready = await context.store.recover();
+        if (!ready) return sendFailure(response, { status: 503, code: "state_error" });
+        return send(response, 200, { protocolVersion: 1, status: "ready", serverEpoch: context.store.serverEpoch,
+          tailCursor: context.store.tailCursor });
+      }
       if (!["/v1/events", "/v1/acks"].includes(url.pathname)) return send(response, 404, { error: { code: "not_found", message: "Not found." } });
       const actor = authenticate(request, response, context.authenticator, context.logger);
       if (actor === undefined) return;

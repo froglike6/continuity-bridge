@@ -37,7 +37,7 @@ services:
         - node
         - -e
         - >-
-          require('https').get({hostname:'localhost',port:8443,path:'/v1/health',ca:require('fs').readFileSync('/run/relay-tls/ca.pem')},r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))
+          require('https').get({hostname:'localhost',port:8443,path:'/v1/ready',ca:require('fs').readFileSync('/run/relay-tls/ca.pem')},r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))
       interval: 5s
       timeout: 3s
       retries: 12
