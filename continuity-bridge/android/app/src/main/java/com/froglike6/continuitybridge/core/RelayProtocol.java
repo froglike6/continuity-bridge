@@ -2,6 +2,7 @@ package com.froglike6.continuitybridge;
 
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
@@ -32,12 +33,19 @@ public final class RelayProtocol {
 
     @SuppressWarnings("unchecked")
     public static Fetch fetch(String body, String requestedAfter) {
+        return fetch(body, requestedAfter, "");
+    }
+
+    @SuppressWarnings("unchecked")
+    public static Fetch fetch(String body, String requestedAfter, String currentServerEpoch) {
         Map<String, Object> object = object(body);
         requireVersion(object); String serverEpoch = serverEpoch(object);
         String after = cursor(object.get("after")); String next = cursor(object.get("nextCursor"));
-        if (!requestedAfter.equals(after) || compare(next, after) < 0) throw new IllegalArgumentException("invalid_cursor_replay");
+        boolean epochChanged = !currentServerEpoch.isEmpty() && !currentServerEpoch.equals(serverEpoch);
+        if (!requestedAfter.equals(after) || (!epochChanged && compare(next, after) < 0)) throw new IllegalArgumentException("invalid_cursor_replay");
         Object rawEvents = object.get("events"); if (!(rawEvents instanceof List)) throw new IllegalArgumentException("invalid_events");
         List<Object> values = (List<Object>) rawEvents; if (values.size() > 100) throw new IllegalArgumentException("too_many_events");
+        if (epochChanged) return new Fetch(next, serverEpoch, Collections.<Entry>emptyList());
         List<Entry> entries = new ArrayList<>(); String previous = after;
         for (Object raw : values) {
             if (!(raw instanceof Map)) throw new IllegalArgumentException("invalid_event_entry");

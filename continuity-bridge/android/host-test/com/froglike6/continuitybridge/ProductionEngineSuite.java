@@ -164,7 +164,7 @@ final class ProductionEngineSuite {
     private static int serverEpochReset(Path fixtures) throws Exception {
         Harness harness = Harness.create(fixtures, eventFetch(emptyFetch("0", "5", SERVER_A)));
         check(harness.engine.step(harness.lease).status() == BridgeEngine.Status.CONNECTED, "initial server epoch failed");
-        harness.transport.poll.add(new TransportResponse(200, emptyFetch("5", "5", SERVER_B)));
+        harness.transport.poll.add(new TransportResponse(200, emptyFetch("5", "0", SERVER_B)));
         check(harness.engine.step(harness.lease).status() == BridgeEngine.Status.RETRY, "server epoch mismatch not retried");
         BridgeState state = harness.store.load();
         check("0".equals(state.cursor()) && SERVER_B.equals(state.serverEpoch()), "server epoch did not reset cursor");
@@ -246,7 +246,11 @@ final class ProductionEngineSuite {
             try { interrupted.save(old.enqueue(outbound)); throw new AssertionError("fault did not interrupt"); }
             catch (IOException expected) { check(normal.load().outbox().isEmpty(), "interruption lost old generation"); }
             Files.write(path, new byte[] {1, 2, 3}); check(normal.load().outbox().isEmpty(), "backup recovery failed");
-            return 2;
+            AtomicStateFile recoveryInterrupted = new AtomicStateFile(path, cipher, AtomicStateFile.Fault.BEFORE_REPLACE);
+            check(recoveryInterrupted.load().outbox().isEmpty(), "second backup recovery failed");
+            try { recoveryInterrupted.save(old.enqueue(outbound)); throw new AssertionError("recovery fault did not interrupt"); }
+            catch (IOException expected) { check(new AtomicStateFile(path, cipher).load().outbox().isEmpty(), "recovered backup was replaced by corrupt primary"); }
+            return 3;
         } finally { deleteTree(directory); }
     }
 

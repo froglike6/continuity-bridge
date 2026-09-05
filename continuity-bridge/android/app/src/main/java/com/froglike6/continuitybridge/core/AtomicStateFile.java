@@ -24,10 +24,11 @@ public final class AtomicStateFile {
     private final Path path;
     private final Fault fault;
     private final StateCipher cipher;
+    private boolean recoveredFromBackup;
     public AtomicStateFile(Path path, StateCipher cipher) { this(path, cipher, Fault.NONE); }
     public AtomicStateFile(Path path, StateCipher cipher, Fault fault) { this.path = path; this.cipher = cipher; this.fault = fault; }
 
-    public void save(BridgeState state) throws IOException {
+    public synchronized void save(BridgeState state) throws IOException {
         List<String> lines = new ArrayList<>();
         lines.add("continuity-state-v1");
         lines.add(field("device", state.deviceId())); lines.add(field("epoch", state.epoch()));
@@ -53,22 +54,22 @@ public final class AtomicStateFile {
         if (encoded.length > MAX_ENVELOPE_BYTES) throw new IOException("state_envelope_too_large");
         try {
             writeForced(temp, encoded);
-            if (Files.exists(path)) {
+            if (Files.exists(path) && !recoveredFromBackup) {
                 Path backupNew = backup.resolveSibling(backup.getFileName() + ".new");
                 try { writeForced(backupNew, Files.readAllBytes(path)); replace(backupNew, backup); }
                 finally { Files.deleteIfExists(backupNew); }
             }
             if (fault == Fault.BEFORE_REPLACE) throw new IOException("injected_before_replace");
-            replace(temp, path); syncDirectory(parent);
+            replace(temp, path); syncDirectory(parent); recoveredFromBackup = false;
         } finally { Files.deleteIfExists(temp); }
     }
 
-    public BridgeState load() throws IOException {
-        try { return load(path); }
+    public synchronized BridgeState load() throws IOException {
+        try { BridgeState state = load(path); recoveredFromBackup = false; return state; }
         catch (IOException currentError) {
             Path backup = path.resolveSibling(path.getFileName() + ".bak");
             if (!Files.exists(backup)) throw currentError;
-            return load(backup);
+            BridgeState state = load(backup); recoveredFromBackup = true; return state;
         }
     }
 

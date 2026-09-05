@@ -141,6 +141,8 @@ public final class AdapterHostSuite {
     private static void logMatcher() {
         String own = "08-30 E ClipboardService: Denying clipboard access to com.froglike6.continuitybridge, application is not in focus nor is it a system service for user 0";
         check(ClipboardDenialMatcher.matches(own, "com.froglike6.continuitybridge"), "own denial");
+        String brief = "E/ClipboardService( 1234): Denying clipboard access to com.froglike6.continuitybridge, application is not in focus nor is it a system service for user 0";
+        check(ClipboardDenialMatcher.matches(brief, "com.froglike6.continuitybridge"), "brief-format denial");
         check(!ClipboardDenialMatcher.matches(own.replace("continuitybridge", "other"), "com.froglike6.continuitybridge"), "other denial");
         check(!ClipboardDenialMatcher.matches("I ActivityManager com.froglike6.continuitybridge", "com.froglike6.continuitybridge"), "unrelated log");
     }

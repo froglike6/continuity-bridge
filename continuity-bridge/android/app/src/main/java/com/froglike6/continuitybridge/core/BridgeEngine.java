@@ -49,8 +49,9 @@ public final class BridgeEngine {
             if (!owner.owns(lease)) return result(Status.STOPPED, null);
             Result status = httpFailure(response.status()); if (status != null) return status;
             if (response.status() != 200) return result(Status.PROTOCOL_FAILURE, "PollStatus");
-            RelayProtocol.Fetch fetch = RelayProtocol.fetch(response.body(), state.cursor());
+            RelayProtocol.Fetch fetch = RelayProtocol.fetch(response.body(), state.cursor(), state.serverEpoch());
             if (!state.serverEpoch().isEmpty() && !state.serverEpoch().equals(fetch.serverEpoch())) {
+                state = store.load();
                 store.save(state.relay(fetch.serverEpoch(), "0")); return result(Status.RETRY, "ServerEpochChanged");
             }
             if (state.serverEpoch().isEmpty()) { state = state.relay(fetch.serverEpoch(), state.cursor()); store.save(state); }
