@@ -162,7 +162,8 @@ public actor ConnectionActor {
         catch let error as URLError where error.code == .cancelled { throw TransportError.cancelled }
         guard let http = response as? HTTPURLResponse else { throw TransportError.invalidResponse }
         guard (200...299).contains(http.statusCode) else { throw TransportError.httpStatus(http.statusCode) }
-        guard data.count <= 1_114_112 else { throw TransportError.malformedResponse }
+        let responseLimit = request.httpMethod == "GET" && request.url?.path == "/v1/events" ? 2_097_152 : 1_114_112
+        guard data.count <= responseLimit else { throw TransportError.malformedResponse }
         do { return (http.statusCode, try StrictJSON.decode(type, from: data)) }
         catch { throw TransportError.malformedResponse }
     }

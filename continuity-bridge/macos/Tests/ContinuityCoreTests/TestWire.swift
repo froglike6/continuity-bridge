@@ -64,6 +64,9 @@ struct ScriptStep: @unchecked Sendable {
                          after flag: LockedFlag? = nil) -> ScriptStep {
         ScriptStep(method: method, path: path, outcome: .response(status, body), requiredFlag: flag)
     }
+    static func anyResponse(status: Int, body: String) -> ScriptStep {
+        ScriptStep(method: "*", path: "*", outcome: .response(status, body), requiredFlag: nil)
+    }
     static func failure(_ method: String, _ path: String, code: URLError.Code) -> ScriptStep {
         ScriptStep(method: method, path: path, outcome: .failure(code), requiredFlag: nil)
     }
@@ -119,7 +122,8 @@ final class ScriptedURLProtocol: URLProtocol, @unchecked Sendable {
         observedCancellationSignal = cancelled
         started?.signal()
         guard let step else { fail(URLError(.badServerResponse)); return }
-        guard request.httpMethod == step.method, request.url?.path == step.path else {
+        guard (step.method == "*" || request.httpMethod == step.method),
+              (step.path == "*" || request.url?.path == step.path) else {
             Self.lock.withLock { Self.mismatch = "expected \(step.method) \(step.path)" }
             fail(URLError(.badURL)); return
         }

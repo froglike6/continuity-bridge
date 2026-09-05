@@ -56,6 +56,38 @@ final class ConnectionLoopTests: XCTestCase {
         XCTAssertEqual(ScriptedURLProtocol.requestCount, 2)
     }
 
+    func testFetch_whenLegalRetainedBatchExceedsEventBodyLimit_decodesAndBeginsApply() async throws {
+        let store = try DurableStateStore(url: temporaryStateURL())
+        let notification = NotificationPayload(notificationKey: "key", packageName: "pkg",
+            appLabel: "App", title: "title", body: String(repeating: "n", count: 60_000))
+        let events = [
+            BridgeEvent(eventId: "large-clipboard", originDeviceId: "android", originRole: .android,
+                originEpoch: "epoch", sequence: 1, createdAtMs: 1,
+                payload: .clipboard(text: String(repeating: "c", count: 1_048_576))),
+            BridgeEvent(eventId: "large-notification-1", originDeviceId: "android", originRole: .android,
+                originEpoch: "epoch", sequence: 2, createdAtMs: 2, payload: .notification(notification)),
+            BridgeEvent(eventId: "large-notification-2", originDeviceId: "android", originRole: .android,
+                originEpoch: "epoch", sequence: 3, createdAtMs: 3, payload: .notification(notification)),
+        ]
+        let body = try fetchBody(events)
+        XCTAssertGreaterThan(body.utf8.count, 1_114_112)
+        XCTAssertLessThan(body.utf8.count, 2_097_152)
+        ScriptedURLProtocol.install([
+            .response("GET", "/v1/events", status: 200, body: body),
+            .anyResponse(status: 401, body: #"{"error":"unauthorized"}"#),
+        ])
+        let applies = LockedCounter()
+        let connection = ConnectionActor(configuration: .test,
+            dependencies: dependencies(store: store, apply: { _ in _ = applies.increment() }))
+        let task = await connection.start(); await task.value
+        let snapshot = await store.snapshot()
+        let status = await connection.status
+        XCTAssertEqual(applies.value, 1)
+        XCTAssertEqual(snapshot.appliedEventIds, [events[0].eventId])
+        XCTAssertEqual(status, .authenticationFailed)
+        XCTAssertNil(ScriptedURLProtocol.failure)
+    }
+
     func testFetch_whenReplayOriginMetadataIsFull_withholdsApplyAndAckWithoutMutation() async throws {
         let store = try DurableStateStore(url: temporaryStateURL())
         for index in 0..<DurableStateStore.maximumReplayOriginKeys {
@@ -195,6 +227,15 @@ final class ConnectionLoopTests: XCTestCase {
     private func fetchBody(_ event: BridgeEvent, cursor: String) -> String {
         let encoded = (try? EventCodec.encode(event)).flatMap { String(data: $0, encoding: .utf8) } ?? "{}"
         return #"{"protocolVersion":1,"serverEpoch":"server","after":"0","nextCursor":"\#(cursor)","events":[{"cursor":"\#(cursor)","event":\#(encoded)}]}"#
+    }
+
+    private func fetchBody(_ events: [BridgeEvent]) throws -> String {
+        let entries = try events.enumerated().map { index, event -> String in
+            let data = try EventCodec.encode(event)
+            guard let encoded = String(data: data, encoding: .utf8) else { throw TransportError.malformedResponse }
+            return #"{"cursor":"\#(index + 1)","event":\#(encoded)}"#
+        }
+        return #"{"protocolVersion":1,"serverEpoch":"server","after":"0","nextCursor":"\#(events.count)","events":[\#(entries.joined(separator: ","))]}"#
     }
 
     private func ackBody(_ eventId: String) -> String {
