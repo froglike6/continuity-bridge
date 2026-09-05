@@ -25,9 +25,16 @@ find "$SOURCE" -name '*.java' -print | LC_ALL=C sort > "$BUILD/sources.txt"
 "$TOOLS/zipalign" -f -p 4 "$BUILD/unsigned.apk" "$BUILD/aligned.apk"
 "$TOOLS/apksigner" sign --ks "$KEYSTORE" --ks-key-alias androiddebugkey --ks-pass pass:android --key-pass pass:android --out "$BUILD/continuity-fixture-debug.apk" "$BUILD/aligned.apk"
 mkdir -p "$ROOT/outputs"
-OUTPUT_TMP="$ROOT/outputs/.continuity-fixture-debug.apk.new.$$"
-trap 'rm -f "$OUTPUT_TMP"' EXIT INT TERM
-cp "$BUILD/continuity-fixture-debug.apk" "$OUTPUT_TMP"
-mv -f "$OUTPUT_TMP" "$ROOT/outputs/continuity-fixture-debug.apk"
+OUTPUT_APK="$ROOT/outputs/continuity-fixture-debug.apk"
+OUTPUT_RECEIPT="$OUTPUT_APK.sha256"
+OUTPUT_APK_TMP="$ROOT/outputs/.continuity-fixture-debug.apk.new.$$"
+OUTPUT_RECEIPT_TMP="$ROOT/outputs/.continuity-fixture-debug.apk.sha256.new.$$"
+trap 'rm -f "$OUTPUT_APK_TMP" "$OUTPUT_RECEIPT_TMP"' EXIT INT TERM
+cp "$BUILD/continuity-fixture-debug.apk" "$OUTPUT_APK_TMP"
+APK_SHA256=$(shasum -a 256 "$OUTPUT_APK_TMP" | awk '{print $1}')
+printf '%s  %s\n' "$APK_SHA256" "continuity-fixture-debug.apk" > "$OUTPUT_RECEIPT_TMP"
+mv -f "$OUTPUT_APK_TMP" "$OUTPUT_APK"
+mv -f "$OUTPUT_RECEIPT_TMP" "$OUTPUT_RECEIPT"
+(CDPATH= cd -- "$ROOT/outputs" && shasum -a 256 -c "$(basename "$OUTPUT_RECEIPT")")
 trap - EXIT INT TERM
-echo "FIXTURE_BUILD_OK apk=$ROOT/outputs/continuity-fixture-debug.apk"
+echo "FIXTURE_BUILD_OK apk=$OUTPUT_APK sha256=$APK_SHA256"

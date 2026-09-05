@@ -42,9 +42,16 @@ find "$SOURCE" "$BUILD/generated" -name '*.java' -print | LC_ALL=C sort > "$BUIL
     --out "$BUILD/continuity-bridge-debug.apk" "$BUILD/app-aligned.apk"
 test -s "$BUILD/continuity-bridge-debug.apk"
 mkdir -p "$ROOT/outputs"
-OUTPUT_TMP="$ROOT/outputs/.continuity-bridge-android-debug.apk.new.$$"
-trap 'rm -f "$OUTPUT_TMP"' EXIT INT TERM
-cp "$BUILD/continuity-bridge-debug.apk" "$OUTPUT_TMP"
-mv -f "$OUTPUT_TMP" "$ROOT/outputs/continuity-bridge-android-debug.apk"
+OUTPUT_APK="$ROOT/outputs/continuity-bridge-android-debug.apk"
+OUTPUT_RECEIPT="$OUTPUT_APK.sha256"
+OUTPUT_APK_TMP="$ROOT/outputs/.continuity-bridge-android-debug.apk.new.$$"
+OUTPUT_RECEIPT_TMP="$ROOT/outputs/.continuity-bridge-android-debug.apk.sha256.new.$$"
+trap 'rm -f "$OUTPUT_APK_TMP" "$OUTPUT_RECEIPT_TMP"' EXIT INT TERM
+cp "$BUILD/continuity-bridge-debug.apk" "$OUTPUT_APK_TMP"
+APK_SHA256=$(shasum -a 256 "$OUTPUT_APK_TMP" | awk '{print $1}')
+printf '%s  %s\n' "$APK_SHA256" "continuity-bridge-android-debug.apk" > "$OUTPUT_RECEIPT_TMP"
+mv -f "$OUTPUT_APK_TMP" "$OUTPUT_APK"
+mv -f "$OUTPUT_RECEIPT_TMP" "$OUTPUT_RECEIPT"
+(CDPATH= cd -- "$ROOT/outputs" && shasum -a 256 -c "$(basename "$OUTPUT_RECEIPT")")
 trap - EXIT INT TERM
-echo "ANDROID_BUILD_OK apk=$ROOT/outputs/continuity-bridge-android-debug.apk"
+echo "ANDROID_BUILD_OK apk=$OUTPUT_APK sha256=$APK_SHA256"
