@@ -1,0 +1,50 @@
+#!/bin/sh
+set -eu
+if test "${CONTINUITY_BUILD_BOUNDED:-0}" != 1; then
+    exec env CONTINUITY_BUILD_BOUNDED=1 /usr/bin/perl -e 'alarm 45; exec @ARGV or die "exec failed: $!\n"' "$0" "$@"
+fi
+ANDROID_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+ROOT=$(CDPATH= cd -- "$ANDROID_DIR/../.." && pwd)
+PLATFORM_JAR=/opt/homebrew/share/android-commandlinetools/platforms/android-35/android.jar
+TOOLS_DIR=/opt/homebrew/share/android-commandlinetools/build-tools/35.0.0
+JAVA_HOME="/Applications/Android Studio.app/Contents/jbr/Contents/Home"
+KEYSTORE=$HOME/.android/debug.keystore
+BUILD="$ANDROID_DIR/build/android"
+SOURCE="$ANDROID_DIR/app/src/main/java"
+RESOURCES="$ANDROID_DIR/app/src/main/res"
+CANONICAL_CA="$ROOT/continuity-bridge/runtime/tls/ca.pem"
+MANIFEST="$ANDROID_DIR/app/src/main/AndroidManifest.xml"
+for path in "$PLATFORM_JAR" "$TOOLS_DIR/aapt2" "$TOOLS_DIR/d8" "$TOOLS_DIR/zipalign" "$TOOLS_DIR/apksigner" "$JAVA_HOME/bin/javac" "$KEYSTORE" "$MANIFEST" "$CANONICAL_CA"; do
+    test -e "$path" || { echo "Missing local tool: $path" >&2; exit 1; }
+done
+cmp -s "$CANONICAL_CA" "$RESOURCES/raw/continuity_local_ca.pem" || {
+    echo "Android CA resource differs from canonical runtime CA" >&2
+    exit 1
+}
+rm -rf "$BUILD"
+mkdir -p "$BUILD/generated" "$BUILD/classes" "$BUILD/dex"
+"$TOOLS_DIR/aapt2" compile --dir "$RESOURCES" -o "$BUILD/resources.zip"
+"$TOOLS_DIR/aapt2" link -I "$PLATFORM_JAR" --manifest "$MANIFEST" --java "$BUILD/generated" \
+    --min-sdk-version 29 --target-sdk-version 35 --version-code 1 --version-name 1.0 \
+    --debug-mode \
+    -o "$BUILD/app-unsigned.apk" "$BUILD/resources.zip"
+find "$SOURCE" "$BUILD/generated" -name '*.java' -print | LC_ALL=C sort > "$BUILD/sources.txt"
+"$JAVA_HOME/bin/javac" -Xlint:all -Xlint:-options -encoding UTF-8 -source 8 -target 8 \
+    -bootclasspath "$PLATFORM_JAR" -d "$BUILD/classes" @"$BUILD/sources.txt"
+"$ANDROID_DIR/verify-production-wiring.sh" "$BUILD/classes"
+"$ANDROID_DIR/verify-manifest-source.sh" "$MANIFEST"
+(cd "$BUILD/classes" && /usr/bin/zip -X -q -r "$BUILD/classes.zip" .)
+"$TOOLS_DIR/d8" --lib "$PLATFORM_JAR" --min-api 29 --output "$BUILD/dex" "$BUILD/classes.zip"
+(cd "$BUILD/dex" && /usr/bin/zip -X -q "$BUILD/app-unsigned.apk" classes.dex)
+"$ANDROID_DIR/verify-adapter-boundary.sh" production "$ANDROID_DIR/app/src/main" "$BUILD/classes" "$BUILD/app-unsigned.apk"
+"$TOOLS_DIR/zipalign" -f -p 4 "$BUILD/app-unsigned.apk" "$BUILD/app-aligned.apk"
+"$TOOLS_DIR/apksigner" sign --ks "$KEYSTORE" --ks-key-alias androiddebugkey --ks-pass pass:android --key-pass pass:android \
+    --out "$BUILD/continuity-bridge-debug.apk" "$BUILD/app-aligned.apk"
+test -s "$BUILD/continuity-bridge-debug.apk"
+mkdir -p "$ROOT/outputs"
+OUTPUT_TMP="$ROOT/outputs/.continuity-bridge-android-debug.apk.new.$$"
+trap 'rm -f "$OUTPUT_TMP"' EXIT INT TERM
+cp "$BUILD/continuity-bridge-debug.apk" "$OUTPUT_TMP"
+mv -f "$OUTPUT_TMP" "$ROOT/outputs/continuity-bridge-android-debug.apk"
+trap - EXIT INT TERM
+echo "ANDROID_BUILD_OK apk=$ROOT/outputs/continuity-bridge-android-debug.apk"

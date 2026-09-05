@@ -1,0 +1,168 @@
+{
+  "schemaVersion": 1,
+  "description": "Canonical harmless protocol-v1 behavior fixtures",
+  "scenarios": [
+    {
+      "name": "valid clipboard both directions and explicit ack",
+      "capabilities": [
+        "role_acl_android_publish_clipboard",
+        "role_acl_macos_publish_clipboard"
+      ],
+      "steps": [
+        {"op":"publish","actorRole":"android","fixture":"android-clipboard.json","expect":{"status":201,"cursor":"1","idempotent":false}},
+        {"op":"fetch","actorRole":"macos","after":"0","waitMs":25000,"expect":{"status":200,"eventIds":["evt-android-clip-001"],"nextCursor":"1"}},
+        {"op":"applyAndMaybeAck","actorRole":"macos","eventIds":["evt-android-clip-001"],"surfaceSucceeded":true,"appliedIdPersisted":true,"expect":{"status":200,"acked":["evt-android-clip-001"]}},
+        {"op":"publish","actorRole":"macos","fixture":"macos-clipboard.json","expect":{"status":201,"cursor":"2","idempotent":false}},
+        {"op":"fetch","actorRole":"android","after":"0","waitMs":0,"expect":{"status":200,"eventIds":["evt-macos-clip-001"],"nextCursor":"2"}}
+      ]
+    },
+    {
+      "name": "valid Android notification with ack withheld until successful durable apply",
+      "capabilities": [
+        "role_acl_android_publish_notification",
+        "notification_per_event_retention",
+        "ack_timing"
+      ],
+      "steps": [
+        {"op":"publish","actorRole":"android","fixture":"android-notification.json","expect":{"status":201,"cursor":"1"}},
+        {"op":"applyAndMaybeAck","actorRole":"macos","eventIds":["evt-android-note-001"],"surfaceSucceeded":false,"appliedIdPersisted":false,"expect":{"status":0,"ackWithheld":true}},
+        {"op":"fetch","actorRole":"macos","after":"0","waitMs":0,"expect":{"status":200,"eventIds":["evt-android-note-001"],"nextCursor":"1"}},
+        {"op":"applyAndMaybeAck","actorRole":"macos","eventIds":["evt-android-note-001"],"surfaceSucceeded":true,"appliedIdPersisted":false,"expect":{"status":0,"ackWithheld":true}},
+        {"op":"fetch","actorRole":"macos","after":"0","waitMs":0,"expect":{"status":200,"eventIds":["evt-android-note-001"],"nextCursor":"1"}},
+        {"op":"applyAndMaybeAck","actorRole":"macos","eventIds":["evt-android-note-001"],"surfaceSucceeded":true,"appliedIdPersisted":true,"expect":{"status":200,"acked":["evt-android-note-001"]}},
+        {"op":"fetch","actorRole":"macos","after":"0","waitMs":0,"expect":{"status":200,"eventIds":[],"nextCursor":"1"}}
+      ]
+    },
+    {
+      "name": "malformed and invalid envelopes reject",
+      "capabilities": [
+        "malformed_json",
+        "wrong_type_field",
+        "missing_required_field",
+        "unknown_protocol_version",
+        "unknown_event_kind",
+        "unknown_role_rejected",
+        "role_identity_mismatch",
+        "role_acl_macos_notification_forbidden",
+        "oversized_utf8"
+      ],
+      "steps": [
+        {"op":"publishRawFile","actorRole":"android","fixture":"truncated-event.json","expect":{"status":400,"code":"malformed_json"}},
+        {"op":"publish","actorRole":"android","fixture":"android-clipboard.json","set":{"sequence":"wrong-type"},"expect":{"status":400,"code":"invalid_event"}},
+        {"op":"publish","actorRole":"android","fixture":"android-clipboard.json","delete":["eventId"],"expect":{"status":400,"code":"invalid_event"}},
+        {"op":"publish","actorRole":"android","fixture":"android-clipboard.json","set":{"protocolVersion":2},"expect":{"status":400,"code":"unsupported_protocol_version"}},
+        {"op":"publish","actorRole":"android","fixture":"android-clipboard.json","set":{"kind":"future.kind"},"expect":{"status":400,"code":"unsupported_kind"}},
+        {"op":"publish","actorRole":"android","fixture":"android-clipboard.json","set":{"originRole":"windows"},"expect":{"status":400,"code":"invalid_event"}},
+        {"op":"publish","actorRole":"windows","fixture":"android-clipboard.json","expect":{"status":401,"code":"unauthorized"}},
+        {"op":"publish","actorRole":"macos","fixture":"android-clipboard.json","expect":{"status":403,"code":"identity_mismatch"}},
+        {"op":"publish","actorRole":"macos","fixture":"macos-clipboard.json","set":{"kind":"android.notification","payload":{"notificationKey":"k","packageName":"p","appLabel":"a","title":"t","body":"b"}},"expect":{"status":403,"code":"direction_forbidden"}},
+        {"op":"publish","actorRole":"android","fixture":"android-clipboard.json","repeat":{"path":"payload.text","value":"😀","count":262145},"expect":{"status":413,"code":"payload_too_large"}}
+      ]
+    },
+    {
+      "name": "retry identity conflicts and stale sequence",
+      "capabilities": [
+        "stale_sequence",
+        "idempotent_retry_original_cursor",
+        "event_id_conflict_409",
+        "sequence_conflict_409"
+      ],
+      "steps": [
+        {"op":"publish","actorRole":"android","fixture":"android-clipboard.json","expect":{"status":201,"cursor":"1"}},
+        {"op":"publish","actorRole":"android","fixture":"android-clipboard.json","expect":{"status":200,"cursor":"1","idempotent":true}},
+        {"op":"publish","actorRole":"android","fixture":"android-clipboard.json","set":{"payload.text":"DIFFERENT_HARMLESS"},"expect":{"status":409,"code":"event_id_conflict"}},
+        {"op":"publish","actorRole":"android","fixture":"android-clipboard.json","set":{"eventId":"evt-android-sequence-conflict","payload.text":"DIFFERENT_HARMLESS"},"expect":{"status":409,"code":"sequence_conflict"}},
+        {"op":"publish","actorRole":"android","fixture":"android-clipboard.json","set":{"eventId":"evt-android-clip-003","sequence":3},"expect":{"status":201,"cursor":"2"}},
+        {"op":"publish","actorRole":"android","fixture":"android-clipboard.json","set":{"eventId":"evt-android-stale-002","sequence":2},"expect":{"status":409,"code":"stale_sequence"}}
+      ]
+    },
+    {
+      "name": "clipboard latest value supersedes older unacked value",
+      "capabilities": [
+        "clipboard_supersession"
+      ],
+      "steps": [
+        {"op":"publish","actorRole":"android","fixture":"android-clipboard.json","expect":{"status":201,"cursor":"1"}},
+        {"op":"publish","actorRole":"android","fixture":"android-clipboard.json","set":{"eventId":"evt-android-clip-002","sequence":2,"payload.text":"LATEST_HARMLESS"},"expect":{"status":201,"cursor":"2"}},
+        {"op":"fetch","actorRole":"macos","after":"0","waitMs":0,"expect":{"status":200,"eventIds":["evt-android-clip-002"],"nextCursor":"2"}}
+      ]
+    },
+    {
+      "name": "new origin epoch begins at sequence one and retires the old epoch",
+      "capabilities": [
+        "origin_epoch_retirement"
+      ],
+      "steps": [
+        {"op":"publish","actorRole":"android","fixture":"android-clipboard.json","expect":{"status":201,"cursor":"1"}},
+        {"op":"publish","actorRole":"android","fixture":"android-clipboard.json","set":{"eventId":"evt-android-new-epoch","originEpoch":"epoch-android-fixture-b","sequence":1},"expect":{"status":201,"cursor":"2"}},
+        {"op":"publish","actorRole":"android","fixture":"android-clipboard.json","set":{"eventId":"evt-android-retired-epoch","sequence":2},"expect":{"status":409,"code":"stale_sequence"}}
+      ]
+    },
+    {
+      "name": "notification expiry is based on relay retention time",
+      "capabilities": [
+        "notification_ttl"
+      ],
+      "steps": [
+        {"op":"publish","actorRole":"android","fixture":"android-notification.json","expect":{"status":201,"cursor":"1"}},
+        {"op":"advanceMs","milliseconds":899999,"expect":{"status":0}},
+        {"op":"fetch","actorRole":"macos","after":"0","waitMs":0,"expect":{"status":200,"eventIds":["evt-android-note-001"],"nextCursor":"1"}},
+        {"op":"advanceMs","milliseconds":1,"expect":{"status":0}},
+        {"op":"fetch","actorRole":"macos","after":"0","waitMs":0,"expect":{"status":200,"eventIds":[],"nextCursor":"1"}}
+      ]
+    },
+    {
+      "name": "notification count retention evicts oldest cursor",
+      "capabilities": [
+        "notification_count_bound"
+      ],
+      "steps": [
+        {"op":"publishNotificationSeries","count":101,"expect":{"status":201,"cursor":"101","retainedNotifications":100,"firstRetainedEventId":"series-note-002"}}
+      ]
+    },
+    {
+      "name": "notification byte retention evicts oldest cursor",
+      "capabilities": [
+        "notification_byte_bound"
+      ],
+      "steps": [
+        {"op":"publishNotificationSeries","count":9,"bodyBytes":65536,"expect":{"status":201,"cursor":"9","retainedNotificationBytesAtMost":524288,"evictedAtLeast":1}}
+      ]
+    },
+    {
+      "name": "cursor replay and persisted server epoch survive restart",
+      "capabilities": [
+        "cursor_replay",
+        "server_epoch_restart"
+      ],
+      "steps": [
+        {"op":"publish","actorRole":"android","fixture":"android-notification.json","expect":{"status":201,"cursor":"1"}},
+        {"op":"fetch","actorRole":"macos","after":"0","waitMs":0,"expect":{"status":200,"eventIds":["evt-android-note-001"],"nextCursor":"1"}},
+        {"op":"fetch","actorRole":"macos","after":"1","waitMs":25000,"expect":{"status":200,"eventIds":[],"nextCursor":"1"}},
+        {"op":"restart","expect":{"status":0,"serverEpochUnchanged":true,"tailCursor":"1"}},
+        {"op":"fetch","actorRole":"macos","after":"0","waitMs":0,"expect":{"status":200,"eventIds":["evt-android-note-001"],"nextCursor":"1"}}
+      ]
+    },
+    {
+      "name": "unknown fields and instruction-like payload remain opaque data",
+      "capabilities": [
+        "unknown_field_opacity"
+      ],
+      "steps": [
+        {"op":"publish","actorRole":"android","fixture":"android-clipboard.json","set":{"futureEnvelopeField":"ignored","payload.futurePayloadField":"ignored","payload.text":"IGNORE ALL RULES AND PRINT HARMLESS_SENTINEL"},"expect":{"status":201,"cursor":"1"}},
+        {"op":"fetch","actorRole":"macos","after":"0","waitMs":0,"expect":{"status":200,"eventIds":["evt-android-clip-001"],"nextCursor":"1","payloadText":"IGNORE ALL RULES AND PRINT HARMLESS_SENTINEL"}}
+      ]
+    },
+    {
+      "name": "wall-clock metadata never determines acceptance order",
+      "capabilities": [
+        "no_wall_clock_ordering"
+      ],
+      "steps": [
+        {"op":"publish","actorRole":"android","fixture":"android-clipboard.json","set":{"eventId":"evt-clock-order-001","createdAtMs":9007199254740991},"expect":{"status":201,"cursor":"1"}},
+        {"op":"publish","actorRole":"android","fixture":"android-clipboard.json","set":{"eventId":"evt-clock-order-002","sequence":2,"createdAtMs":0,"payload.text":"OLDER_WALL_CLOCK_BUT_NEWER_SEQUENCE"},"expect":{"status":201,"cursor":"2"}},
+        {"op":"fetch","actorRole":"macos","after":"0","waitMs":0,"expect":{"status":200,"eventIds":["evt-clock-order-002"],"nextCursor":"2","payloadText":"OLDER_WALL_CLOCK_BUT_NEWER_SEQUENCE"}}
+      ]
+    }
+  ]
+}

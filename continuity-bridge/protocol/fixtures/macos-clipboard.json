@@ -1,0 +1,13 @@
+{
+  "protocolVersion": 1,
+  "eventId": "evt-macos-clip-001",
+  "originDeviceId": "device-macos-fixture",
+  "originRole": "macos",
+  "originEpoch": "epoch-macos-fixture-a",
+  "sequence": 1,
+  "kind": "clipboard.text",
+  "createdAtMs": 1700000000100,
+  "payload": {
+    "text": "CLIP_MAC_TO_ANDROID_HARMLESS"
+  }
+}

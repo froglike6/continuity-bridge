@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <dimen name="continuity_space_1">4dp</dimen>
+    <dimen name="continuity_space_2">8dp</dimen>
+    <dimen name="continuity_space_4">16dp</dimen>
+    <dimen name="continuity_space_6">24dp</dimen>
+    <dimen name="continuity_control_min_height">48dp</dimen>
+    <dimen name="continuity_divider_height">1dp</dimen>
+    <dimen name="continuity_type_ui_status">20sp</dimen>
+    <dimen name="continuity_type_ui_body">14sp</dimen>
+</resources>

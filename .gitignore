@@ -1,0 +1,33 @@
+.DS_Store
+.idea/
+.vscode/
+.codegraph
+.omo/
+
+# Local Android/Swift build products
+**/.gradle/
+**/build/
+**/local.properties
+continuity-bridge/macos/.build/
+continuity-bridge/macos/.swiftpm/
+continuity-bridge/macos/dist/
+**/DerivedData/
+**/xcuserdata/
+*.xcuserstate
+
+# Generated relay bundles and all local runtime state/secrets
+continuity-bridge/relay/continuity-bridge-relay-source.tar.gz
+continuity-bridge/runtime/
+
+# Signing material must never enter the repository
+*.jks
+*.keystore
+*.p12
+*.mobileprovision
+
+# Local process and scratch files
+*.log
+*.pid
+*.tmp
+*.swp
+*~

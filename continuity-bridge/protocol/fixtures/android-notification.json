@@ -1,0 +1,18 @@
+{
+  "protocolVersion": 1,
+  "eventId": "evt-android-note-001",
+  "originDeviceId": "device-android-fixture",
+  "originRole": "android",
+  "originEpoch": "epoch-android-fixture-a",
+  "sequence": 2,
+  "kind": "android.notification",
+  "createdAtMs": 1700000000200,
+  "expiresAtMs": 1700000900200,
+  "payload": {
+    "notificationKey": "fixture-notification-key",
+    "packageName": "com.example.harmlessfixture",
+    "appLabel": "Harmless Fixture",
+    "title": "Fixture title",
+    "body": "Fixture body"
+  }
+}

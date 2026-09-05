@@ -1,0 +1,49 @@
+name: continuity-bridge-task2
+services:
+  relay:
+    image: continuity-bridge-relay:task2
+    build:
+      context: .
+      dockerfile: Dockerfile
+    user: "1000:1000"
+    environment:
+      RELAY_HOST: "0.0.0.0"
+      RELAY_PORT: "8443"
+      RELAY_STATE_PATH: "/var/lib/continuity-relay/state.json"
+      RELAY_AUTH_PATH: "/run/relay-auth/auth.json"
+      RELAY_TLS_CERT_PATH: "/run/relay-tls/server.pem"
+      RELAY_TLS_KEY_PATH: "/run/relay-tls/server-key.pem"
+    ports:
+      - "127.0.0.1:8443:8443"
+    volumes:
+      - ../runtime/state:/var/lib/continuity-relay:rw
+      - ../runtime/tls/ca.pem:/run/relay-tls/ca.pem:ro
+      - ../runtime/tls/server.pem:/run/relay-tls/server.pem:ro
+      - ../runtime/tls/server-key.pem:/run/relay-tls/server-key.pem:ro
+      - ../runtime/auth/auth.json:/run/relay-auth/auth.json:ro
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=16m,uid=1000,gid=1000
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    restart: unless-stopped
+    mem_limit: 128m
+    pids_limit: 64
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - >-
+          require('https').get({hostname:'localhost',port:8443,path:'/v1/health',ca:require('fs').readFileSync('/run/relay-tls/ca.pem')},r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 2s
+    networks:
+      - relay_internal
+networks:
+  relay_internal:
+    driver: bridge
