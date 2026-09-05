@@ -52,16 +52,26 @@ Android 알림은 Android → macOS 단방향이고, 클립보드는 양방향�
 현재 checkout에서 아래 명령이 통과했습니다.
 
 - protocol: `CONTRACT_FIXTURES_OK count=123 scenarios=12`
-- relay: 35/35
-- Android engine: 67/67
-- Android host: 326/326
-- Android adapter: 48/48
+- relay: 37/37
+- Android engine: 68/68
+- Android host: 327/327
+- Android adapter: 49/49
 - Android encrypted state: 14/14
 - Android fixture observation: 5/5
-- macOS XCTest: 55/55
+- macOS XCTest: 56/56
 - integration verifier: 46/46
 
 `continuity-bridge/android/fixture/run-host-tests.sh`의 빠져 있던 executable bit도 복구했습니다.
+
+### 읽기 전용 검토 반영 상태
+
+- 수정 완료: R01 relay 저장 실패 시 candidate state를 공개하지 않고 live store를 fail-closed 처리
+- 수정 완료: R02 retained 이벤트의 dedupe identity가 4,096개 경계에서 밀려나지 않도록 보존
+- 수정 완료: R04 Android `logcat -v brief` 형식의 `ClipboardService(PID):` 거부 로그 인식
+- 수정 완료: R05 Android/macOS 모두 server epoch 변경 시 낮아진 cursor를 허용하고 0부터 재시도
+- 수정 완료: R09 backup 복구 직후 저장 실패가 정상 backup을 손상 primary로 덮지 않도록 보호
+- 수정 완료: R11 fixture의 실제 `bigText` 우선 본문과 아래 native 확인 문구를 일치시킴
+- 아직 남음: R03, R06~R08, R10, R12 및 stale relay temp 정리·Android clipboard 적용 확인 수준 보강
 
 ## 실제 표면에서 확인된 것
 
@@ -84,9 +94,9 @@ Android 알림은 Android → macOS 단방향이고, 클립보드는 양방향�
 
 가장 중요한 남은 항목입니다. relay event와 Mac ACK는 확인했지만, 실제 Notification Center에서 다음을 한 번의 fresh run으로 확인하지 못했습니다.
 
-- `Fixture title` / `Fixture body`가 `Continuity Bridge` 출처의 네이티브 알림 한 개로 표시
+- `Fixture title` / `Fixture big body`가 `Continuity Bridge` 출처의 네이티브 알림 한 개로 표시
 - 같은 Android notification key의 update 후 항목 수는 여전히 한 개
-- 제목/본문은 `Fixture title 업데이트` / `Fixture body 업데이트`로 바뀌고 이전 문자열은 사라짐
+- 제목/본문은 `Fixture title 업데이트` / `Fixture big body 업데이트`로 바뀌고 이전 문자열은 사라짐
 - Android 브리지 foreground-service 알림은 Mac에 나타나지 않음
 
 주의: `com.apple.notificationcenterui`만 조회하면 닫힌 패널의 system widget만 보일 수 있습니다. 실제 패널은 macOS 메뉴 막대의 시계를 클릭해 연 다음 접근성 트리와 스크린샷을 확인해야 합니다.
