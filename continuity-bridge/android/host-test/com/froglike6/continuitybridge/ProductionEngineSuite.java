@@ -26,6 +26,8 @@ final class ProductionEngineSuite {
         count += serverEpochReset(fixtures);
         count += publishRetry(fixtures);
         count += producerDuringPublish(fixtures);
+        count += producerBetweenPublishLoadAndSave(fixtures);
+        count += producerDuringInitialEpoch(fixtures);
         count += corruptToken(fixtures);
         count += productionClassification(fixtures);
         count += stopLongPoll(fixtures);
@@ -34,7 +36,7 @@ final class ProductionEngineSuite {
         count += connectionPresentation();
         count += serviceRunOwnership();
         count += repeatedServiceRunRace();
-        System.out.println("PRODUCTION_ENGINE_OK cases=" + count + " markers=malformed_2xx,cursor_replay,server_epoch_reset,persist_before_ack,ack_after_apply,apply_failure_withholds_ack,epoch_metadata_full_withholds_apply_ack,restart_before_ack,restart_after_ack,outbox_idempotent,producer_during_publish_preserved,401_terminal,403_terminal_Http403,timeout_retry,corrupt_token_terminal,corrupt_state_terminal,stop_long_poll,persistence_interruption_recovery,response_bounds,expires_roundtrip,service_run_ownership,service_run_race_100");
+        System.out.println("PRODUCTION_ENGINE_OK cases=" + count + " markers=malformed_2xx,cursor_replay,server_epoch_reset,persist_before_ack,ack_after_apply,apply_failure_withholds_ack,epoch_metadata_full_withholds_apply_ack,restart_before_ack,restart_after_ack,outbox_idempotent,producer_during_publish_preserved,producer_between_publish_load_save_preserved,producer_during_initial_epoch_preserved,401_terminal,403_terminal_Http403,timeout_retry,corrupt_token_terminal,corrupt_state_terminal,stop_long_poll,persistence_interruption_recovery,response_bounds,expires_roundtrip,service_run_ownership,service_run_race_100");
         return count;
     }
 
@@ -208,6 +210,46 @@ final class ProductionEngineSuite {
         return 2;
     }
 
+    private static int producerDuringInitialEpoch(Path fixtures) throws Exception {
+        Harness harness = Harness.create(fixtures, eventFetch(emptyFetch("0")));
+        harness.transport.onPoll = new Runnable() { @Override public void run() {
+            DurableOutbox producer = new DurableOutbox(harness.store, new SequenceIds("initial-epoch"), new ObservationWindow(1000, 4));
+            check(producer.enqueueNotification(NotificationMapper.map("key", "pkg", "App", "title", "body", null, 2), 2), "initial epoch producer failed");
+        }};
+        check(harness.engine.step(harness.lease).status() == BridgeEngine.Status.CONNECTED, "initial epoch producer step failed");
+        BridgeState state = harness.store.load();
+        check(state.outbox().size() == 1 && state.nextSequence() == 2,
+                "initial epoch persistence overwrote producer state");
+        return 2;
+    }
+
+    private static int producerBetweenPublishLoadAndSave(Path fixtures) throws Exception {
+        Path directory = Files.createTempDirectory("publish-interleave-");
+        try {
+            ProtocolEvent event = EventCodec.decode(fixtures.resolve("android-clipboard.json"));
+            FileBridgeStateStore backing = FileBridgeStateStore.create(directory.resolve("state.db"), TestStateCipher.create(), event.deviceId(), event.epoch(), 8, 8);
+            backing.save(backing.load().enqueue(event));
+            InterleavingStore store = new InterleavingStore(backing);
+            LoopbackTransport transport = new LoopbackTransport();
+            transport.publish.add(new TransportResponse(201, publishBody(event.eventId())));
+            transport.poll.add(new TransportResponse(200, emptyFetch("0")));
+            transport.onPublish = new Runnable() { @Override public void run() {
+                store.arm(new Runnable() { @Override public void run() {
+                    DurableOutbox producer = new DurableOutbox(store, new SequenceIds("post-publish"), new ObservationWindow(1000, 4));
+                    check(producer.enqueueNotification(NotificationMapper.map("key", "pkg", "App", "title", "body", null, 2), 2), "post-publish producer failed");
+                }});
+            }};
+            ConnectionOwner owner = new ConnectionOwner();
+            BridgeEngine engine = new BridgeEngine(store, transport, new FixedToken(), new RecordingApplier(), owner);
+            check(engine.step(owner.start()).status() == BridgeEngine.Status.CONNECTED, "post-publish interleaving step failed");
+            store.awaitProducer();
+            BridgeState state = store.load();
+            check(state.outbox().size() == 1 && state.nextSequence() == 3,
+                    "publish completion overwrote producer state");
+            return 2;
+        } finally { deleteTree(directory); }
+    }
+
     private static int productionClassification(Path fixtures) throws Exception {
         Harness unauthorized = Harness.create(fixtures, eventFetch("{}")); unauthorized.transport.poll.clear(); unauthorized.transport.poll.add(new TransportResponse(401, "{}"));
         check(unauthorized.engine.step(unauthorized.lease).status() == BridgeEngine.Status.AUTH_FAILURE, "401 not terminal auth");
@@ -302,14 +344,52 @@ final class ProductionEngineSuite {
     }
     private static final class FixedToken implements TokenProvider { @Override public String load() { return "test-token-from-provider"; } }
     private static final class RecordingApplier implements EventApplier { boolean succeed; final List<String> applied = new ArrayList<>(); @Override public boolean apply(ProtocolEvent event) { if (succeed) applied.add(event.eventId()); return succeed; } }
+    private static final class InterleavingStore implements BridgeStateStore {
+        private final BridgeStateStore delegate;
+        private final CountDownLatch loaded = new CountDownLatch(1), attempted = new CountDownLatch(1), finished = new CountDownLatch(1);
+        private volatile boolean armed, intercepted;
+        private volatile Throwable producerFailure;
+        InterleavingStore(BridgeStateStore delegate) { this.delegate = delegate; }
+        void arm(Runnable producer) {
+            armed = true;
+            Thread thread = new Thread(() -> {
+                try {
+                    if (!loaded.await(2, TimeUnit.SECONDS)) throw new AssertionError("engine did not load after publish");
+                    attempted.countDown(); producer.run();
+                } catch (Throwable error) { producerFailure = error; attempted.countDown(); }
+                finally { finished.countDown(); }
+            }, "post-publish-producer");
+            thread.start();
+        }
+        void awaitProducer() throws Exception {
+            if (!finished.await(2, TimeUnit.SECONDS)) throw new AssertionError("post-publish producer hung");
+            if (producerFailure != null) throw new AssertionError("post-publish producer failed", producerFailure);
+        }
+        @Override public BridgeState load() throws IOException {
+            BridgeState state = delegate.load();
+            if (armed) {
+                armed = false; intercepted = true; loaded.countDown();
+                await(attempted, "post-publish producer did not attempt enqueue");
+            }
+            return state;
+        }
+        @Override public void save(BridgeState state) throws IOException {
+            if (intercepted && !Thread.holdsLock(this)) await(finished, "post-publish producer did not finish enqueue");
+            delegate.save(state);
+        }
+        private static void await(CountDownLatch latch, String message) throws IOException {
+            try { if (!latch.await(2, TimeUnit.SECONDS)) throw new IOException(message); }
+            catch (InterruptedException error) { Thread.currentThread().interrupt(); throw new IOException(message, error); }
+        }
+    }
     private static final class LoopbackTransport implements BridgeTransport {
         final Queue<TransportResponse> publish = new ArrayDeque<>(), poll = new ArrayDeque<>(), ack = new ArrayDeque<>();
         final List<String> published = new ArrayList<>(), pollCursors = new ArrayList<>(), acked = new ArrayList<>();
         final CountDownLatch entered = new CountDownLatch(1), release = new CountDownLatch(1); volatile boolean blockPoll, cancelled;
         IOException pollError;
-        Runnable onPublish;
+        Runnable onPublish, onPoll;
         @Override public TransportResponse publish(String token, ProtocolEvent event) throws IOException { published.add(EventCodec.encode(event)); if (onPublish != null) { Runnable action = onPublish; onPublish = null; action.run(); } return next(publish); }
-        @Override public TransportResponse poll(String token, String cursor) throws IOException { pollCursors.add(cursor); entered.countDown(); if (pollError != null) throw pollError; if (blockPoll) { try { release.await(); } catch (InterruptedException error) { Thread.currentThread().interrupt(); } throw new CancelledTransportException(); } return next(poll); }
+        @Override public TransportResponse poll(String token, String cursor) throws IOException { pollCursors.add(cursor); entered.countDown(); if (onPoll != null) { Runnable action = onPoll; onPoll = null; action.run(); } if (pollError != null) throw pollError; if (blockPoll) { try { release.await(); } catch (InterruptedException error) { Thread.currentThread().interrupt(); } throw new CancelledTransportException(); } return next(poll); }
         @Override public TransportResponse acknowledge(String token, String deviceId, List<String> ids) throws IOException { acked.addAll(ids); return next(ack); }
         @Override public void cancel() { cancelled = true; release.countDown(); }
         private static TransportResponse next(Queue<TransportResponse> queue) throws IOException { TransportResponse response = queue.poll(); if (response == null) throw new IOException("no scripted response"); return response; }

@@ -39,34 +39,53 @@ public final class BridgeEngine {
                 Result status = httpFailure(response.status()); if (status != null) return status;
                 if (response.status() != 200 && response.status() != 201) return result(Status.PROTOCOL_FAILURE, "PublishStatus");
                 String serverEpoch = RelayProtocol.published(response.body(), event.eventId());
-                state = store.load();
-                state = state.published(event.eventId());
-                if (!state.serverEpoch().isEmpty() && !state.serverEpoch().equals(serverEpoch)) state = state.relay(serverEpoch, "0");
-                else if (state.serverEpoch().isEmpty()) state = state.relay(serverEpoch, state.cursor());
-                store.save(state);
+                state = store.update(new BridgeStateStore.Mutation() {
+                    @Override public BridgeState apply(BridgeState current) {
+                        BridgeState next = current.published(event.eventId());
+                        if (!next.serverEpoch().isEmpty() && !next.serverEpoch().equals(serverEpoch)) return next.relay(serverEpoch, "0");
+                        if (next.serverEpoch().isEmpty()) return next.relay(serverEpoch, next.cursor());
+                        return next;
+                    }
+                });
             }
-            TransportResponse response = transport.poll(token, state.cursor());
+            String pollCursor = state.cursor(); String pollEpoch = state.serverEpoch();
+            TransportResponse response = transport.poll(token, pollCursor);
             if (!owner.owns(lease)) return result(Status.STOPPED, null);
             Result status = httpFailure(response.status()); if (status != null) return status;
             if (response.status() != 200) return result(Status.PROTOCOL_FAILURE, "PollStatus");
-            RelayProtocol.Fetch fetch = RelayProtocol.fetch(response.body(), state.cursor(), state.serverEpoch());
-            if (!state.serverEpoch().isEmpty() && !state.serverEpoch().equals(fetch.serverEpoch())) {
-                state = store.load();
-                store.save(state.relay(fetch.serverEpoch(), "0")); return result(Status.RETRY, "ServerEpochChanged");
+            RelayProtocol.Fetch fetch = RelayProtocol.fetch(response.body(), pollCursor, pollEpoch);
+            if (!pollEpoch.isEmpty() && !pollEpoch.equals(fetch.serverEpoch())) {
+                store.update(new BridgeStateStore.Mutation() {
+                    @Override public BridgeState apply(BridgeState current) { return current.relay(fetch.serverEpoch(), "0"); }
+                });
+                return result(Status.RETRY, "ServerEpochChanged");
             }
-            if (state.serverEpoch().isEmpty()) { state = state.relay(fetch.serverEpoch(), state.cursor()); store.save(state); }
+            if (pollEpoch.isEmpty()) {
+                state = store.update(new BridgeStateStore.Mutation() {
+                    @Override public BridgeState apply(BridgeState current) {
+                        return current.serverEpoch().isEmpty() ? current.relay(fetch.serverEpoch(), current.cursor()) : current;
+                    }
+                });
+            }
             for (RelayProtocol.Entry entry : fetch.entries()) {
                 state = store.load(); ProtocolEvent event = entry.event(); BridgeState.Delivery delivery = state.classify(event);
                 if (delivery == BridgeState.Delivery.STALE || delivery == BridgeState.Delivery.CONFLICT) return result(Status.PROTOCOL_FAILURE, delivery.name());
                 if (delivery == BridgeState.Delivery.NEW) {
                     if (!applier.apply(event)) return result(Status.PERMISSION_REQUIRED, "ApplyUnavailable");
-                    state = store.load();
-                    state = state.applied(event, entry.cursor());
-                } else { state = state.pendingAck(event.eventId(), entry.cursor()); }
-                store.save(state);
+                    state = store.update(new BridgeStateStore.Mutation() {
+                        @Override public BridgeState apply(BridgeState current) { return current.applied(event, entry.cursor()); }
+                    });
+                } else {
+                    state = store.update(new BridgeStateStore.Mutation() {
+                        @Override public BridgeState apply(BridgeState current) { return current.pendingAck(event.eventId(), entry.cursor()); }
+                    });
+                }
             }
-            state = store.load();
-            if (!fetch.nextCursor().equals(state.cursor())) { state = state.cursor(fetch.nextCursor()); store.save(state); }
+            state = store.update(new BridgeStateStore.Mutation() {
+                @Override public BridgeState apply(BridgeState current) {
+                    return fetch.nextCursor().equals(current.cursor()) ? current : current.cursor(fetch.nextCursor());
+                }
+            });
             Result finalAck = flushAcks(token, state, lease); return finalAck == null ? result(Status.CONNECTED, null) : finalAck;
         } catch (SecureStoreException error) { return result(Status.SECURITY_FAILURE, error.getClass().getSimpleName());
         } catch (CorruptStateException error) { return result(Status.SECURITY_FAILURE, error.getClass().getSimpleName());
@@ -86,8 +105,12 @@ public final class BridgeEngine {
         if (!owner.owns(lease)) return result(Status.STOPPED, null);
         Result status = httpFailure(response.status()); if (status != null) return status;
         if (response.status() != 200) return result(Status.PROTOCOL_FAILURE, "AckStatus");
-        RelayProtocol.acknowledged(response.body(), ids); state = store.load();
-        store.save(state.acknowledged(new java.util.LinkedHashSet<>(ids))); return null;
+        RelayProtocol.acknowledged(response.body(), ids);
+        store.update(new BridgeStateStore.Mutation() {
+            @Override public BridgeState apply(BridgeState current) {
+                return current.acknowledged(new java.util.LinkedHashSet<>(ids));
+            }
+        }); return null;
     }
     private static Result httpFailure(int status) {
         if (status >= 200 && status < 300) return null;
