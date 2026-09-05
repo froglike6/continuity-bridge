@@ -93,8 +93,13 @@ public actor ConnectionActor {
         let request = try fetchRequest(after: snapshot.cursor, token: token)
         let result = try await send(request, as: FetchResponse.self)
         guard result.status == 200 else { throw TransportError.malformedResponse }
-        try ResponseValidation.fetch(result.value, expectedAfter: snapshot.cursor)
-        if try await dependencies.state.observeServerEpoch(result.value.serverEpoch) { return }
+        let epochChanged = try ResponseValidation.fetch(result.value, expectedAfter: snapshot.cursor,
+                                                        expectedServerEpoch: snapshot.serverEpoch)
+        if epochChanged {
+            _ = try await dependencies.state.observeServerEpoch(result.value.serverEpoch)
+            return
+        }
+        _ = try await dependencies.state.observeServerEpoch(result.value.serverEpoch)
         for entry in result.value.events {
             let disposition = await dependencies.state.classifyInbound(entry.event)
             switch disposition {

@@ -40,6 +40,22 @@ final class ConnectionLoopTests: XCTestCase {
         XCTAssertNil(ScriptedURLProtocol.failure)
     }
 
+    func testFetch_whenServerEpochChangesAndTailResets_restartsFromZero() async throws {
+        let store = try DurableStateStore(url: temporaryStateURL())
+        try await store.updateRelay(serverEpoch: "server-old", cursor: "5")
+        ScriptedURLProtocol.install([
+            .response("GET", "/v1/events", status: 200,
+                      body: #"{"protocolVersion":1,"serverEpoch":"server-new","after":"5","nextCursor":"0","events":[]}"#),
+            .response("GET", "/v1/events", status: 401, body: #"{"error":"unauthorized"}"#),
+        ])
+        let connection = makeConnection(store: store)
+        let task = await connection.start(); await task.value
+        let snapshot = await store.snapshot()
+        XCTAssertEqual(snapshot.serverEpoch, "server-new")
+        XCTAssertEqual(snapshot.cursor, "0")
+        XCTAssertEqual(ScriptedURLProtocol.requestCount, 2)
+    }
+
     func testFetch_whenReplayOriginMetadataIsFull_withholdsApplyAndAckWithoutMutation() async throws {
         let store = try DurableStateStore(url: temporaryStateURL())
         for index in 0..<DurableStateStore.maximumReplayOriginKeys {
