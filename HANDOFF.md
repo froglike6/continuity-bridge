@@ -35,6 +35,7 @@ Android 알림은 Android → macOS 단방향이고, 클립보드는 양방향�
 - Android 10+ 제한 시 ClipCascade 계열의 logcat denial 감지와 짧은 focusable overlay 재읽기 경로
 - 독립 package `com.froglike6.continuityfixture`에서 클립보드 설정/읽기와 stable-ID 알림 게시/업데이트
 - production APK와 fixture APK의 source/class/dex/resource 분리 검증
+- production 및 fixture APK 빌드가 APK와 SHA-256 영수증을 함께 갱신하고 즉시 검증
 
 ### macOS
 
@@ -52,26 +53,28 @@ Android 알림은 Android → macOS 단방향이고, 클립보드는 양방향�
 현재 checkout에서 아래 명령이 통과했습니다.
 
 - protocol: `CONTRACT_FIXTURES_OK count=123 scenarios=12`
-- relay: 37/37
-- Android engine: 68/68
-- Android host: 327/327
+- relay: 40/40
+- Android engine: 72/72
+- Android host: 331/331
 - Android adapter: 49/49
 - Android encrypted state: 14/14
 - Android fixture observation: 5/5
-- macOS XCTest: 56/56
+- macOS XCTest: 57/57
 - integration verifier: 46/46
 
 `continuity-bridge/android/fixture/run-host-tests.sh`의 빠져 있던 executable bit도 복구했습니다.
 
 ### 읽기 전용 검토 반영 상태
 
-- 수정 완료: R01 relay 저장 실패 시 candidate state를 공개하지 않고 live store를 fail-closed 처리
-- 수정 완료: R02 retained 이벤트의 dedupe identity가 4,096개 경계에서 밀려나지 않도록 보존
+- 수정 완료: R01 relay 저장 실패 시 candidate state를 공개하지 않고 fail-closed 처리. 별도 `/v1/ready`가 검증된 디스크 상태를 reload한 뒤 실제 write probe까지 성공해야 복구하며 Docker healthcheck도 readiness를 사용
+- 수정 완료: R02 retained 이벤트의 dedupe identity가 4,096개 경계에서 밀려나지 않도록 보존. retained identity와 최근 4,096개 retry 계약의 충돌은 남음
+- 수정 완료: R03 Android 상태 갱신을 원자적 `store.update()` 경계로 통일해 최초 epoch·publish 완료 중 producer 상태 유실 방지
 - 수정 완료: R04 Android `logcat -v brief` 형식의 `ClipboardService(PID):` 거부 로그 인식
 - 수정 완료: R05 Android/macOS 모두 server epoch 변경 시 낮아진 cursor를 허용하고 0부터 재시도
+- 수정 완료: R06 macOS `GET /v1/events`에 2 MiB batch 응답 상한을 분리하고 큰 정상 fetch의 전체 apply·ACK·최종 cursor 회귀 검사 추가
 - 수정 완료: R09 backup 복구 직후 저장 실패가 정상 backup을 손상 primary로 덮지 않도록 보호
 - 수정 완료: R11 fixture의 실제 `bigText` 우선 본문과 아래 native 확인 문구를 일치시킴
-- 아직 남음: R03, R06~R08, R10, R12 및 stale relay temp 정리·Android clipboard 적용 확인 수준 보강
+- 아직 남음: R02 retry 계약, R07, R08, R10, R12 및 stale relay temp 정리·Android clipboard 적용 확인 수준 보강
 
 ## 실제 표면에서 확인된 것
 
@@ -85,6 +88,7 @@ Android 알림은 Android → macOS 단방향이고, 클립보드는 양방향�
 - ACK가 끝난 뒤 relay container 교체: retained 0, 재전달 0
 - ACK 전 relay 상태 보존과 교체 후 재전달 자체는 관찰됨
 - relay 재연결 뒤 Mac → Android 클립보드 동작
+- Docker named volume의 relay state를 실제 쓰기 불가로 만들면 publish 500, liveness 200, readiness 503와 container unhealthy가 관찰되고, 권한 복구 뒤 readiness 200·재시도 201·단일 수신·container healthy로 회복
 
 위 항목들은 전체 제품 완료 판정이 아닙니다. 아래 미해결 경계를 남겨 둡니다.
 
@@ -113,7 +117,7 @@ listener 활성화 직후 기존 active notification들이 다시 들어올 수 
 
 ### 3. 전체 E2E 한 번에 완료
 
-마지막 v5 실행은 Android와 relay가 연결된 상태에서 Mac의 새 토큰을 Keychain에 저장하려는 순간 중단됐습니다. 현재는 Docker Desktop이 꺼져 있고 AVD, Mac 앱, 8443 listener가 없으므로 기존 runtime을 이어 쓰지 말고 fresh runtime으로 다시 시작해야 합니다.
+마지막 v5 실행은 Android와 relay가 연결된 상태에서 Mac의 새 토큰을 Keychain에 저장하려는 순간 중단됐습니다. 현재 Docker Desktop daemon은 켜져 있지만 AVD, Mac 앱, 8443 relay listener가 없으므로 기존 runtime을 이어 쓰지 말고 fresh runtime으로 다시 시작해야 합니다.
 
 ### 4. 실제 장치와 배포 환경
 
@@ -223,9 +227,9 @@ node --test continuity-bridge/integration/test-*.mjs
 이 파일들은 원래 로컬 CA에 묶인 개발용 산출물입니다.
 
 ```text
-2585e82b417de63a8cf53279457a03d758900064a0ba305a8cc9a3174e24f16a  ContinuityBridge.app.zip
-313d0f328bca821ec7e014db10c8d7d2ae99895eac9971ed5b1ba6f12004b576  continuity-bridge-android-debug.apk
-0a3c42871ec12e20cdf5d14cb6db302a63b59bde268722b907da7e99ab2f5106  continuity-fixture-debug.apk
+6d22d4dbd105826e12d34d8972ce4bc5f381f69a596c587c2e28a436cfd65b28  ContinuityBridge.app.zip
+e0e7288f65bdf5c497cfe8cf3680cb152b6208c8b47fbf01d6adb1cf5a66c6bb  continuity-bridge-android-debug.apk
+b2921691bbbce82be0aa4e0fc9079179354734f36502875a6393598c31e38254  continuity-fixture-debug.apk
 ```
 
 ## 보안 및 커밋 경계
