@@ -56,7 +56,7 @@ final class ConnectionLoopTests: XCTestCase {
         XCTAssertEqual(ScriptedURLProtocol.requestCount, 2)
     }
 
-    func testFetch_whenLegalRetainedBatchExceedsEventBodyLimit_decodesAndBeginsApply() async throws {
+    func testFetch_whenLegalRetainedBatchExceedsEventBodyLimit_appliesAndAcknowledgesAll() async throws {
         let store = try DurableStateStore(url: temporaryStateURL())
         let notification = NotificationPayload(notificationKey: "key", packageName: "pkg",
             appLabel: "App", title: "title", body: String(repeating: "n", count: 60_000))
@@ -74,7 +74,10 @@ final class ConnectionLoopTests: XCTestCase {
         XCTAssertLessThan(body.utf8.count, 2_097_152)
         ScriptedURLProtocol.install([
             .response("GET", "/v1/events", status: 200, body: body),
-            .anyResponse(status: 401, body: #"{"error":"unauthorized"}"#),
+            .response("POST", "/v1/acks", status: 200, body: ackBody(events[0].eventId)),
+            .response("POST", "/v1/acks", status: 200, body: ackBody(events[1].eventId)),
+            .response("POST", "/v1/acks", status: 200, body: ackBody(events[2].eventId)),
+            .response("GET", "/v1/events", status: 401, body: #"{"error":"unauthorized"}"#),
         ])
         let applies = LockedCounter()
         let connection = ConnectionActor(configuration: .test,
@@ -82,9 +85,11 @@ final class ConnectionLoopTests: XCTestCase {
         let task = await connection.start(); await task.value
         let snapshot = await store.snapshot()
         let status = await connection.status
-        XCTAssertEqual(applies.value, 1)
-        XCTAssertEqual(snapshot.appliedEventIds, [events[0].eventId])
+        XCTAssertEqual(applies.value, 3)
+        XCTAssertEqual(snapshot.appliedEventIds, events.map(\.eventId))
+        XCTAssertEqual(snapshot.cursor, "3")
         XCTAssertEqual(status, .authenticationFailed)
+        XCTAssertEqual(ScriptedURLProtocol.requestCount, 5)
         XCTAssertNil(ScriptedURLProtocol.failure)
     }
 
