@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
 import { readFile, writeFile } from "node:fs/promises";
 import test from "node:test";
+import { StateError } from "../src/errors.mjs";
+import { atomicWrite } from "../src/persistence.mjs";
+import { emptyState, fingerprint } from "../src/state-model.mjs";
 import { DurableStore } from "../src/store.mjs";
 import { ANDROID, MACOS, clipboard, fixedClock, notification, tempState } from "./helpers.mjs";
 
@@ -86,4 +89,48 @@ test("Given structurally corrupt durable metadata When opened Then startup fails
   // When / Then
   await assert.rejects(() => DurableStore.open({ statePath: fixture.path, clock: fixedClock() }), { name: "StateError" });
   assert.match(store.serverEpoch, /^[0-9a-f]{32}$/);
+});
+
+test("Given a persistence failure When an event is retried Then the live store never reports an uncommitted success", async () => {
+  // Given
+  const fixture = await tempState();
+  let writes = 0;
+  const store = await DurableStore.open({ statePath: fixture.path, clock: fixedClock(), writeState: async (path, state) => {
+    writes += 1;
+    if (writes === 1) return atomicWrite(path, state);
+    throw new StateError(new Error("injected_write_failure"));
+  } });
+  // When / Then
+  await assert.rejects(() => store.publish(ANDROID, clipboard()), { name: "StateError" });
+  await assert.rejects(() => store.publish(ANDROID, clipboard()), { name: "StateError" });
+  assert.equal(writes, 2);
+  const reopened = await DurableStore.open({ statePath: fixture.path, clock: fixedClock() });
+  assert.deepEqual((await reopened.fetch(MACOS, "0")).events, []);
+});
+
+test("Given a retained clipboard at the dedupe limit When newer history arrives Then restart preserves the pending event", async () => {
+  // Given
+  const fixture = await tempState();
+  const retained = clipboard();
+  const state = emptyState();
+  state.nextCursor = "4097";
+  state.retained = [{ cursor: "1", destination: "macos", event: retained,
+    bytes: Buffer.byteLength(JSON.stringify(retained), "utf8"), deadlineMs: null }];
+  state.highWaters = [{ key: `${ANDROID.deviceId}\u0000${retained.originEpoch}`, sequence: 4096 }];
+  state.activeEpochs = [{ deviceId: ANDROID.deviceId, epoch: retained.originEpoch }];
+  state.dedupe = Array.from({ length: 4096 }, (_, index) => ({
+    eventId: index === 0 ? retained.eventId : `history-${index + 1}`,
+    originKey: `${ANDROID.deviceId}\u0000${retained.originEpoch}`,
+    sequence: index + 1,
+    fingerprint: index === 0 ? fingerprint(retained) : "0".repeat(64),
+    cursor: String(index + 1), originRole: "android",
+  }));
+  await atomicWrite(fixture.path, state);
+  const store = await DurableStore.open({ statePath: fixture.path, clock: fixedClock() });
+  // When
+  await store.publish(ANDROID, notification(4097));
+  const reopened = await DurableStore.open({ statePath: fixture.path, clock: fixedClock() });
+  // Then
+  assert.deepEqual((await reopened.fetch(MACOS, "0")).events.map((entry) => entry.event.eventId),
+    [retained.eventId, "event-notification-4097"]);
 });

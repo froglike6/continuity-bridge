@@ -1,26 +1,28 @@
 import { atomicWrite, loadState } from "./persistence.mjs";
 import { LIMITS, parseEvent } from "./schema.mjs";
 import { destinationFor, emptyState, fingerprint, MAX_REPLAY_ORIGIN_KEYS, prepareState } from "./state-model.mjs";
-import { failure } from "./errors.mjs";
+import { failure, StateError } from "./errors.mjs";
 
 const originKey = (event) => `${event.originDeviceId}\u0000${event.originEpoch}`;
 const tailCursor = (state) => String(Number(state.nextCursor) - 1);
 
 export class DurableStore {
-  constructor(statePath, clock, state) {
+  constructor(statePath, clock, state, writeState = atomicWrite) {
     this.statePath = statePath;
     this.clock = clock;
     this.state = state;
+    this.writeState = writeState;
+    this.unavailableError = undefined;
     this.queue = Promise.resolve();
     this.waiters = new Set();
   }
 
-  static async open({ statePath, clock = { now: () => Date.now() } }) {
+  static async open({ statePath, clock = { now: () => Date.now() }, writeState = atomicWrite }) {
     const loaded = await loadState(statePath);
     const prepared = loaded === undefined ? { state: emptyState(), migrated: false } : prepareState(loaded);
     const state = prepared.state;
-    const store = new DurableStore(statePath, clock, state);
-    if (loaded === undefined || prepared.migrated) await atomicWrite(statePath, state);
+    const store = new DurableStore(statePath, clock, state, writeState);
+    if (loaded === undefined || prepared.migrated) await writeState(statePath, state);
     return store;
   }
 
@@ -29,24 +31,45 @@ export class DurableStore {
   get waiterCount() { return this.waiters.size; }
 
   serialize(action) {
-    const result = this.queue.then(action, action);
+    const guarded = () => {
+      if (this.unavailableError !== undefined) throw this.unavailableError;
+      return action();
+    };
+    const result = this.queue.then(guarded, guarded);
     this.queue = result.catch(() => undefined);
     return result;
   }
 
-  prune() {
-    const before = this.state.retained.length;
-    this.state.retained = this.state.retained.filter((entry) => entry.event.kind !== "android.notification" || entry.deadlineMs > this.clock.now());
-    const notifications = () => this.state.retained.filter((entry) => entry.event.kind === "android.notification")
+  prune(state) {
+    const before = state.retained.length;
+    state.retained = state.retained.filter((entry) => entry.event.kind !== "android.notification" || entry.deadlineMs > this.clock.now());
+    const notifications = () => state.retained.filter((entry) => entry.event.kind === "android.notification")
       .sort((left, right) => Number(left.cursor) - Number(right.cursor));
     let pending = notifications();
     let total = pending.reduce((sum, entry) => sum + entry.bytes, 0);
     while (pending.length > LIMITS.notificationCount || total > LIMITS.notificationBytes) {
       const evicted = pending.shift();
-      this.state.retained = this.state.retained.filter((entry) => entry.cursor !== evicted.cursor);
+      state.retained = state.retained.filter((entry) => entry.cursor !== evicted.cursor);
       total -= evicted.bytes;
     }
-    return before !== this.state.retained.length;
+    return before !== state.retained.length;
+  }
+
+  trimDedupe(state) {
+    let excess = state.dedupe.length - 4_096;
+    if (excess <= 0) return;
+    const retainedIds = new Set(state.retained.map((entry) => entry.event.eventId));
+    state.dedupe = state.dedupe.filter((entry) => retainedIds.has(entry.eventId) || excess-- <= 0);
+  }
+
+  async commit(candidate) {
+    try {
+      await this.writeState(this.statePath, candidate);
+    } catch (error) {
+      this.unavailableError = error instanceof StateError ? error : new StateError(error);
+      throw this.unavailableError;
+    }
+    this.state = candidate;
   }
 
   async publish(actor, rawEvent) {
@@ -54,48 +77,49 @@ export class DurableStore {
     if (parsed.status !== 0) return parsed;
     const event = parsed.event;
     return this.serialize(async () => {
-      this.prune();
+      const candidate = structuredClone(this.state);
+      this.prune(candidate);
       const identity = fingerprint(event);
-      const previousId = this.state.dedupe.find((entry) => entry.eventId === event.eventId);
+      const previousId = candidate.dedupe.find((entry) => entry.eventId === event.eventId);
       if (previousId !== undefined) return previousId.fingerprint === identity
         ? { status: 200, cursor: previousId.cursor, idempotent: true }
         : failure("event_id_conflict");
       const key = originKey(event);
-      const previousSequence = this.state.dedupe.find((entry) => entry.originKey === key && entry.sequence === event.sequence);
+      const previousSequence = candidate.dedupe.find((entry) => entry.originKey === key && entry.sequence === event.sequence);
       if (previousSequence !== undefined) return previousSequence.fingerprint === identity
         ? { status: 200, cursor: previousSequence.cursor, idempotent: true }
         : failure("sequence_conflict");
-      if (this.state.retiredEpochs.includes(key)) return failure("stale_sequence");
-      const highWater = this.state.highWaters.find((entry) => entry.key === key)?.sequence ?? 0;
+      if (candidate.retiredEpochs.includes(key)) return failure("stale_sequence");
+      const highWater = candidate.highWaters.find((entry) => entry.key === key)?.sequence ?? 0;
       if (event.sequence <= highWater) return failure("stale_sequence");
-      const active = this.state.activeEpochs.find((entry) => entry.deviceId === event.originDeviceId);
+      const active = candidate.activeEpochs.find((entry) => entry.deviceId === event.originDeviceId);
       if (active !== undefined && active.epoch !== event.originEpoch && event.sequence !== 1) return failure("stale_sequence");
-      const highWaterEntry = this.state.highWaters.find((entry) => entry.key === key);
+      const highWaterEntry = candidate.highWaters.find((entry) => entry.key === key);
       const rotatesEpoch = active !== undefined && active.epoch !== event.originEpoch;
-      if ((highWaterEntry === undefined && this.state.highWaters.length >= MAX_REPLAY_ORIGIN_KEYS) ||
-          (rotatesEpoch && this.state.retiredEpochs.length >= MAX_REPLAY_ORIGIN_KEYS) ||
-          (active === undefined && this.state.activeEpochs.length >= MAX_REPLAY_ORIGIN_KEYS)) return failure("stale_sequence");
+      if ((highWaterEntry === undefined && candidate.highWaters.length >= MAX_REPLAY_ORIGIN_KEYS) ||
+          (rotatesEpoch && candidate.retiredEpochs.length >= MAX_REPLAY_ORIGIN_KEYS) ||
+          (active === undefined && candidate.activeEpochs.length >= MAX_REPLAY_ORIGIN_KEYS)) return failure("stale_sequence");
       if (active !== undefined && active.epoch !== event.originEpoch) {
-        this.state.retiredEpochs.push(`${event.originDeviceId}\u0000${active.epoch}`);
+        candidate.retiredEpochs.push(`${event.originDeviceId}\u0000${active.epoch}`);
         active.epoch = event.originEpoch;
-      } else if (active === undefined) this.state.activeEpochs.push({ deviceId: event.originDeviceId, epoch: event.originEpoch });
-      if (highWaterEntry === undefined) this.state.highWaters.push({ key, sequence: event.sequence });
+      } else if (active === undefined) candidate.activeEpochs.push({ deviceId: event.originDeviceId, epoch: event.originEpoch });
+      if (highWaterEntry === undefined) candidate.highWaters.push({ key, sequence: event.sequence });
       else highWaterEntry.sequence = event.sequence;
-      const cursor = this.state.nextCursor;
-      this.state.nextCursor = String(Number(cursor) + 1);
+      const cursor = candidate.nextCursor;
+      candidate.nextCursor = String(Number(cursor) + 1);
       const destination = destinationFor(event);
       if (event.kind === "clipboard.text") {
-        this.state.retained = this.state.retained.filter((entry) => !(entry.destination === destination && entry.event.kind === "clipboard.text"));
+        candidate.retained = candidate.retained.filter((entry) => !(entry.destination === destination && entry.event.kind === "clipboard.text"));
       }
       const bytes = Buffer.byteLength(JSON.stringify(event), "utf8");
       const requestedDeadline = event.expiresAtMs ?? Number.MAX_SAFE_INTEGER;
-      this.state.retained.push({ cursor, destination, event, bytes,
+      candidate.retained.push({ cursor, destination, event, bytes,
         deadlineMs: event.kind === "android.notification" ? Math.min(this.clock.now() + LIMITS.notificationTtlMs, requestedDeadline) : null });
-      this.state.dedupe.push({ eventId: event.eventId, originKey: key, sequence: event.sequence,
+      candidate.dedupe.push({ eventId: event.eventId, originKey: key, sequence: event.sequence,
         fingerprint: identity, cursor, originRole: event.originRole });
-      if (this.state.dedupe.length > 4_096) this.state.dedupe.splice(0, this.state.dedupe.length - 4_096);
-      this.prune();
-      await atomicWrite(this.statePath, this.state);
+      this.prune(candidate);
+      this.trimDedupe(candidate);
+      await this.commit(candidate);
       this.signal(destination);
       return { status: 201, cursor, idempotent: false };
     });
@@ -108,8 +132,9 @@ export class DurableStore {
 
   async fetch(actor, after) {
     return this.serialize(async () => {
-      const changed = this.prune();
-      if (changed) await atomicWrite(this.statePath, this.state);
+      const candidate = structuredClone(this.state);
+      const changed = this.prune(candidate);
+      if (changed) await this.commit(candidate);
       return { status: 200, protocolVersion: 1, serverEpoch: this.serverEpoch, after,
         nextCursor: tailCursor(this.state), events: structuredClone(this.recordsFor(actor.role, after)) };
     });
@@ -117,23 +142,24 @@ export class DurableStore {
 
   async ack(actor, eventIds) {
     return this.serialize(async () => {
+      const candidate = structuredClone(this.state);
       for (const eventId of eventIds) {
-        const retained = this.state.retained.find((entry) => entry.event.eventId === eventId);
+        const retained = candidate.retained.find((entry) => entry.event.eventId === eventId);
         if (retained !== undefined && retained.destination !== actor.role) return failure("identity_mismatch");
-        const known = this.state.dedupe.find((entry) => entry.eventId === eventId);
+        const known = candidate.dedupe.find((entry) => entry.eventId === eventId);
         if (retained === undefined && known !== undefined && destinationFor({ originRole: known.originRole }) !== actor.role) {
           return failure("identity_mismatch");
         }
       }
-      this.prune();
+      this.prune(candidate);
       const acked = [];
       const alreadyAbsent = [];
       for (const eventId of eventIds) {
-        const retained = this.state.retained.find((entry) => entry.event.eventId === eventId);
+        const retained = candidate.retained.find((entry) => entry.event.eventId === eventId);
         if (retained === undefined) alreadyAbsent.push(eventId);
-        else { this.state.retained = this.state.retained.filter((entry) => entry !== retained); acked.push(eventId); }
+        else { candidate.retained = candidate.retained.filter((entry) => entry !== retained); acked.push(eventId); }
       }
-      await atomicWrite(this.statePath, this.state);
+      await this.commit(candidate);
       return { status: 200, acked, alreadyAbsent };
     });
   }
