@@ -1,6 +1,6 @@
-import { atomicWrite, loadState } from "./persistence.mjs";
+import { atomicWrite, cleanupTempFiles, loadState } from "./persistence.mjs";
 import { LIMITS, parseEvent } from "./schema.mjs";
-import { destinationFor, emptyState, fingerprint, MAX_REPLAY_ORIGIN_KEYS, prepareState } from "./state-model.mjs";
+import { destinationFor, emptyState, fingerprint, MAX_REPLAY_ORIGIN_KEYS, prepareState, RECENT_IDENTITY_COUNT } from "./state-model.mjs";
 import { failure, StateError } from "./errors.mjs";
 
 const originKey = (event) => `${event.originDeviceId}\u0000${event.originEpoch}`;
@@ -18,6 +18,7 @@ export class DurableStore {
   }
 
   static async open({ statePath, clock = { now: () => Date.now() }, writeState = atomicWrite }) {
+    await cleanupTempFiles(statePath);
     const loaded = await loadState(statePath);
     const prepared = loaded === undefined ? { state: emptyState(), migrated: false } : prepareState(loaded);
     const state = prepared.state;
@@ -44,6 +45,7 @@ export class DurableStore {
     const restore = async () => {
       if (this.unavailableError === undefined) return true;
       try {
+        await cleanupTempFiles(this.statePath);
         const loaded = await loadState(this.statePath);
         if (loaded === undefined) throw new StateError(new Error("persisted state disappeared during recovery"));
         const prepared = prepareState(loaded);
@@ -79,13 +81,14 @@ export class DurableStore {
   }
 
   trimDedupe(state) {
-    let excess = state.dedupe.length - 4_096;
-    if (excess <= 0) return;
+    const oldestRecentCursor = Number(state.nextCursor) - RECENT_IDENTITY_COUNT;
     const retainedIds = new Set(state.retained.map((entry) => entry.event.eventId));
-    state.dedupe = state.dedupe.filter((entry) => retainedIds.has(entry.eventId) || excess-- <= 0);
+    state.dedupe = state.dedupe.filter((entry) =>
+      Number(entry.cursor) >= oldestRecentCursor || retainedIds.has(entry.eventId));
   }
 
   async commit(candidate) {
+    this.trimDedupe(candidate);
     try {
       await this.writeState(this.statePath, candidate);
     } catch (error) {
@@ -141,7 +144,6 @@ export class DurableStore {
       candidate.dedupe.push({ eventId: event.eventId, originKey: key, sequence: event.sequence,
         fingerprint: identity, cursor, originRole: event.originRole });
       this.prune(candidate);
-      this.trimDedupe(candidate);
       await this.commit(candidate);
       this.signal(destination);
       return { status: 201, cursor, idempotent: false };

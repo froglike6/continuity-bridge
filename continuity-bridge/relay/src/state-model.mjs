@@ -1,8 +1,10 @@
 import { createHash, randomBytes } from "node:crypto";
 import { StateError } from "./errors.mjs";
-import { parseEvent } from "./schema.mjs";
+import { LIMITS, parseEvent } from "./schema.mjs";
 
 export const MAX_REPLAY_ORIGIN_KEYS = 64;
+export const RECENT_IDENTITY_COUNT = 4_096;
+const MAX_DEDUPE_IDENTITIES = RECENT_IDENTITY_COUNT + LIMITS.notificationCount + 2;
 
 export function emptyState() {
   return { schemaVersion: 1, serverEpoch: randomBytes(16).toString("hex"), nextCursor: "1",
@@ -43,7 +45,7 @@ export function validateState(value) {
   if (value === null || typeof value !== "object" || value.schemaVersion !== 1 ||
       !/^[0-9a-f]{32}$/.test(value.serverEpoch ?? "") || !canonicalCursor(value.nextCursor) || value.nextCursor === "0" ||
       !Array.isArray(value.retained) || !Array.isArray(value.highWaters) || !Array.isArray(value.activeEpochs) ||
-      !Array.isArray(value.retiredEpochs) || !Array.isArray(value.dedupe) || value.dedupe.length > 4_096 ||
+      !Array.isArray(value.retiredEpochs) || !Array.isArray(value.dedupe) || value.dedupe.length > MAX_DEDUPE_IDENTITIES ||
       value.highWaters.length > MAX_REPLAY_ORIGIN_KEYS || value.activeEpochs.length > MAX_REPLAY_ORIGIN_KEYS ||
       value.retiredEpochs.length > MAX_REPLAY_ORIGIN_KEYS) {
     throw new StateError(new TypeError("invalid state schema"));
