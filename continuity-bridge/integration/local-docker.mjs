@@ -73,7 +73,7 @@ export class DockerHarness {
   }
 
   compose() {
-    return `services:\n  relay:\n    image: ${this.image}\n    user: "1000:1000"\n    environment:\n      RELAY_HOST: 0.0.0.0\n      RELAY_PORT: "8443"\n      RELAY_STATE_PATH: /var/lib/continuity-relay/state.json\n      RELAY_AUTH_PATH: /run/relay-auth/auth.json\n      RELAY_TLS_CERT_PATH: /run/relay-tls/server.pem\n      RELAY_TLS_KEY_PATH: /run/relay-tls/server-key.pem\n    ports: ["127.0.0.1:8443:8443"]\n    volumes:\n      - ${join(this.runtime, "state")}:/var/lib/continuity-relay:rw\n      - ${this.caPath}:/run/relay-tls/ca.pem:ro\n      - ${join(this.runtime, "tls", "server.pem")}:/run/relay-tls/server.pem:ro\n      - ${join(this.runtime, "tls", "server-key.pem")}:/run/relay-tls/server-key.pem:ro\n      - ${this.authPath}:/run/relay-auth/auth.json:ro\n    tmpfs:\n      - "/tmp:rw,noexec,nosuid,nodev,size=16m,uid=1000,gid=1000"\n    read_only: true\n    cap_drop: [ALL]\n    security_opt: [no-new-privileges:true]\n    restart: unless-stopped\n    pids_limit: 64\n    mem_limit: 128m\n    healthcheck:\n      test: ["CMD", "node", "-e", "require('https').get({hostname:'localhost',port:8443,path:'/v1/health',ca:require('fs').readFileSync('/run/relay-tls/ca.pem')},r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))"]\n      interval: 5s\n      timeout: 3s\n      retries: 12\n      start_period: 2s\n`;
+    return `services:\n  relay:\n    image: ${this.image}\n    user: "1000:1000"\n    environment:\n      RELAY_HOST: 0.0.0.0\n      RELAY_PORT: "8443"\n      RELAY_STATE_PATH: /var/lib/continuity-relay/state.json\n      RELAY_AUTH_PATH: /run/relay-auth/auth.json\n      RELAY_TLS_CERT_PATH: /run/relay-tls/server.pem\n      RELAY_TLS_KEY_PATH: /run/relay-tls/server-key.pem\n    ports: ["127.0.0.1:8443:8443"]\n    volumes:\n      - ${join(this.runtime, "state")}:/var/lib/continuity-relay:rw\n      - ${this.caPath}:/run/relay-tls/ca.pem:ro\n      - ${join(this.runtime, "tls", "server.pem")}:/run/relay-tls/server.pem:ro\n      - ${join(this.runtime, "tls", "server-key.pem")}:/run/relay-tls/server-key.pem:ro\n      - ${this.authPath}:/run/relay-auth/auth.json:ro\n    tmpfs:\n      - "/tmp:rw,noexec,nosuid,nodev,size=16m,uid=1000,gid=1000"\n    read_only: true\n    cap_drop: [ALL]\n    security_opt: [no-new-privileges:true]\n    restart: unless-stopped\n    pids_limit: 64\n    mem_limit: 128m\n    healthcheck:\n      test: ["CMD", "node", "-e", "require('https').get({hostname:'localhost',port:8443,path:'/v1/ready',ca:require('fs').readFileSync('/run/relay-tls/ca.pem')},r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))"]\n      interval: 5s\n      timeout: 3s\n      retries: 12\n      start_period: 2s\n`;
   }
 
   async config() { return loadConfig({ caPath: this.caPath, authPath: this.authPath }); }
@@ -88,10 +88,10 @@ export class DockerHarness {
         const config = await this.config();
         try {
           const { request } = await import("./http-client.mjs");
-          const response = await request(config, { timeoutMs: 1_000 });
-          if (response.status === 200 && response.body?.status === "ok") return;
+          const response = await request(config, { path: "/v1/ready", timeoutMs: 1_000 });
+          if (response.status === 200 && response.body?.status === "ready") return;
         } catch (error) {
-          if (attempt === 19) throw new Error("relay health request failed", { cause: error });
+          if (attempt === 19) throw new Error("relay readiness request failed", { cause: error });
         }
       }
       await new Promise((resolve) => setTimeout(resolve, 250));
