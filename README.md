@@ -8,7 +8,7 @@
 - TLS 인증서 고정과 역할별 토큰 인증
 - Android 37 AVD용 독립 fixture APK
 
-현재 단계는 개발용 프로토타입입니다. 검증된 범위, 남은 문제, 새 머신에서 이어서 작업하는 순서는 [HANDOFF.md](HANDOFF.md)에 정리되어 있습니다.
+2026-09-07 기준 현재 Mac, Debian Docker, Android Studio API 37 AVD에서 구현과 실제 전달 검증을 마쳤습니다. 개발용 서명 산출물이며, 검증 결과와 로컬 재실행·새 환경 설정 절차는 [HANDOFF.md](HANDOFF.md)에 정리되어 있습니다.
 
 ## 디렉터리
 
