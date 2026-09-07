@@ -1,13 +1,14 @@
 import ServiceManagement
 
 public enum LoginItemState: String, Equatable, Sendable {
-    case enabled, disabled, requiresApproval, error
+    case enabled, disabled, requiresApproval, notFound, error
 
     public var koreanText: String {
         switch self {
         case .enabled: "로그인 시 열기 켜짐"
         case .disabled: "로그인 시 열기 꺼짐"
         case .requiresApproval: "시스템 설정에서 승인 필요"
+        case .notFound: "등록된 로그인 항목 없음"
         case .error: "로그인 항목 변경 실패"
         }
     }
@@ -29,7 +30,7 @@ public final class SystemLoginItemClient: LoginItemClient {
         case .enabled: .enabled
         case .notRegistered: .disabled
         case .requiresApproval: .requiresApproval
-        case .notFound: .error
+        case .notFound: .notFound
         @unknown default: .error
         }
     }

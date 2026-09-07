@@ -1,14 +1,17 @@
 import AppKit
 import ContinuityCore
 import SwiftUI
+import UserNotifications
 
 @MainActor
-final class AppDelegate: NSObject, NSApplicationDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDelegate {
     private var permitsTermination = false
     private var didRequestLaunchStart = false
+    private var settingsWindow: NSWindow?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApplication.shared.setActivationPolicy(.accessory)
+        UNUserNotificationCenter.current().delegate = self
         switch LaunchIntent.resolve(arguments: CommandLine.arguments,
                                    hasSavedConfiguration: BridgeHostModel.hasSavedLaunchConfiguration) {
         case .bootSmoke:
@@ -22,8 +25,33 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             didRequestLaunchStart = true
             Task { await BridgeHostModel.shared.start() }
         case .stopped:
-            break
+            showSettings()
         }
+    }
+
+    nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification,
+                                           withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void) {
+        completionHandler([.banner, .list])
+    }
+
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        showSettings()
+        return true
+    }
+
+    func showSettings() {
+        if settingsWindow == nil {
+            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 540, height: 520),
+                                  styleMask: [.titled, .closable, .miniaturizable, .resizable],
+                                  backing: .buffered, defer: false)
+            window.title = "Continuity Bridge 설정"
+            window.contentView = NSHostingView(rootView: SettingsView(model: BridgeHostModel.shared))
+            window.isReleasedWhenClosed = false
+            window.center()
+            settingsWindow = window
+        }
+        NSApp.activate(ignoringOtherApps: true)
+        settingsWindow?.makeKeyAndOrderFront(nil)
     }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
@@ -51,7 +79,7 @@ struct ContinuityMenuBarApp: App {
                 Task { model.isRunning ? await model.stop() : await model.start() }
             }
             Button("설정 보기") {
-                NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
+                appDelegate.showSettings()
             }
             Divider()
             Button("종료") {
@@ -61,7 +89,6 @@ struct ContinuityMenuBarApp: App {
                 }
             }
         }
-        Settings { SettingsView(model: model) }
     }
 }
 

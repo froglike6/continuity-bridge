@@ -85,13 +85,15 @@ public final class PasteboardSynchronizer {
             return nil
         }
         guard current != lastObservedChangeCount || correlation != nil else { return nil }
-        lastObservedChangeCount = current
         guard let text = surface.string(for: .string) else {
             if let correlation { try await state.consumePasteboardCorrelation(correlation) }
+            lastObservedChangeCount = current
             return nil
         }
-        return try await state.enqueueClipboard(text: text, createdAtMs: createdAtMs,
-                                                replacing: correlation)
+        let event = try await state.enqueueClipboard(text: text, createdAtMs: createdAtMs,
+                                                      replacing: correlation)
+        lastObservedChangeCount = current
+        return event
     }
 
     public func start(intervalMilliseconds: Int = 500,

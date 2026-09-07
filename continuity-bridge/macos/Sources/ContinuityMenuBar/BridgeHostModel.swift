@@ -69,7 +69,7 @@ final class BridgeHostModel: ObservableObject {
             isRunning = true
             status = .connecting
             detailText = nil
-            board.start(onEvent: { _ in }, onError: { [weak self] in
+            board.start(onEvent: { _ in await actor.outboxChanged() }, onError: { [weak self] in
                 await MainActor.run { self?.detailText = "클립보드를 읽지 못했습니다" }
             })
             let run = await actor.start()

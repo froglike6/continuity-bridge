@@ -14,7 +14,8 @@ public struct RetryPolicy: Sendable {
     public static func classify(statusCode: Int?, error: Error?) -> FailureDisposition {
         if let urlError = error as? URLError {
             switch urlError.code {
-            case .timedOut, .networkConnectionLost, .notConnectedToInternet, .cannotConnectToHost, .cancelled: return .retryable
+            case .timedOut, .networkConnectionLost, .notConnectedToInternet, .cannotConnectToHost,
+                 .secureConnectionFailed, .cancelled: return .retryable
             default: return .terminal
             }
         }

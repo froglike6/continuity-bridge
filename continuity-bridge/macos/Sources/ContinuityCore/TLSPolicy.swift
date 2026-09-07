@@ -55,11 +55,15 @@ public enum TLSPolicy: Sendable {
     }
 }
 
-final class PinnedSessionDelegate: NSObject, URLSessionDelegate, @unchecked Sendable {
+final class PinnedSessionDelegate: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
     private let policy: TLSPolicy
+    private let lock = NSLock()
+    private var rejection: TLSValidationError?
     init(policy: TLSPolicy) { self.policy = policy }
 
-    func urlSession(_ session: URLSession, didReceive challenge: URLAuthenticationChallenge,
+    var validationError: TLSValidationError? { lock.withLock { rejection } }
+
+    func urlSession(_ session: URLSession, task: URLSessionTask, didReceive challenge: URLAuthenticationChallenge,
                     completionHandler: @escaping @Sendable (URLSession.AuthChallengeDisposition, URLCredential?) -> Void) {
         guard challenge.protectionSpace.authenticationMethod == NSURLAuthenticationMethodServerTrust,
               let trust = challenge.protectionSpace.serverTrust else {
@@ -70,6 +74,7 @@ final class PinnedSessionDelegate: NSObject, URLSessionDelegate, @unchecked Send
             try policy.evaluate(trust: trust, requestedHost: challenge.protectionSpace.host)
             completionHandler(.useCredential, URLCredential(trust: trust))
         } catch {
+            lock.withLock { rejection = (error as? TLSValidationError) ?? .trustFailed }
             completionHandler(.cancelAuthenticationChallenge, nil)
         }
     }

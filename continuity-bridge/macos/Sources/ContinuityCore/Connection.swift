@@ -7,16 +7,15 @@ public actor ConnectionActor {
     private let dependencies: ConnectionDependencies
     private let retryPolicy: RetryPolicy
     private let session: URLSession
-    private let delegate: PinnedSessionDelegate
     private var runTask: Task<Void, Never>?
+    private var pendingFetch: Task<(status: Int, value: FetchResponse), Error>?
 
     public init(configuration: ConnectionConfiguration, dependencies: ConnectionDependencies,
                 retryPolicy: RetryPolicy = RetryPolicy()) {
         self.configuration = configuration
         self.dependencies = dependencies
         self.retryPolicy = retryPolicy
-        delegate = PinnedSessionDelegate(policy: configuration.tlsPolicy)
-        session = URLSession(configuration: dependencies.sessionConfiguration(), delegate: delegate, delegateQueue: nil)
+        session = URLSession(configuration: dependencies.sessionConfiguration())
     }
 
     @discardableResult
@@ -36,11 +35,16 @@ public actor ConnectionActor {
     public func stop() async {
         let task = runTask
         task?.cancel()
+        pendingFetch?.cancel()
         let tasks = await session.allTasks
         tasks.forEach { $0.cancel() }
         await task?.value
         runTask = nil
         status = .stopped
+    }
+
+    public func outboxChanged() {
+        pendingFetch?.cancel()
     }
 
     private func runLoop(generation expectedGeneration: Int) async {
@@ -90,8 +94,17 @@ public actor ConnectionActor {
 
     private func fetchApplyAndAck(token: String) async throws {
         let snapshot = await dependencies.state.snapshot()
+        guard snapshot.outbox.isEmpty else { return }
         let request = try fetchRequest(after: snapshot.cursor, token: token)
-        let result = try await send(request, as: FetchResponse.self)
+        let fetch = Task { try await send(request, as: FetchResponse.self) }
+        pendingFetch = fetch
+        defer { pendingFetch = nil }
+        let result: (status: Int, value: FetchResponse)
+        do { result = try await fetch.value }
+        catch {
+            if fetch.isCancelled && !Task.isCancelled { return }
+            throw error
+        }
         guard result.status == 200 else { throw TransportError.malformedResponse }
         let epochChanged = try ResponseValidation.fetch(result.value, expectedAfter: snapshot.cursor,
                                                         expectedServerEpoch: snapshot.serverEpoch)
@@ -158,8 +171,13 @@ public actor ConnectionActor {
     private func send<T: Decodable>(_ request: URLRequest, as type: T.Type) async throws -> (status: Int, value: T) {
         let data: Data
         let response: URLResponse
-        do { (data, response) = try await session.data(for: request) }
-        catch let error as URLError where error.code == .cancelled { throw TransportError.cancelled }
+        let delegate = PinnedSessionDelegate(policy: configuration.tlsPolicy)
+        do { (data, response) = try await session.data(for: request, delegate: delegate) }
+        catch {
+            if let rejection = delegate.validationError { throw rejection }
+            if (error as? URLError)?.code == .cancelled { throw TransportError.cancelled }
+            throw error
+        }
         guard let http = response as? HTTPURLResponse else { throw TransportError.invalidResponse }
         guard (200...299).contains(http.statusCode) else { throw TransportError.httpStatus(http.statusCode) }
         let responseLimit = request.httpMethod == "GET" && request.url?.path == "/v1/events" ? 2_097_152 : 1_114_112

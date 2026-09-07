@@ -179,6 +179,43 @@ final class ConnectionLoopTests: XCTestCase {
         XCTAssertEqual(status, .authenticationFailed)
     }
 
+    func testRetry_whenTLSHandshakeIsInterrupted_retriesAndAppliesAfterReconnect() async throws {
+        let store = try DurableStateStore(url: temporaryStateURL())
+        let event = remoteEvent(id: "after-tls-reconnect", sequence: 1)
+        let applied = LockedFlag()
+        let delays = LockedValues()
+        ScriptedURLProtocol.install([
+            .failure("GET", "/v1/events", code: .secureConnectionFailed),
+            .response("GET", "/v1/events", status: 200, body: fetchBody(event, cursor: "1")),
+            .response("POST", "/v1/acks", status: 200, body: ackBody(event.eventId), after: applied),
+            .response("GET", "/v1/events", status: 401, body: #"{"error":"unauthorized"}"#),
+        ])
+        let connection = ConnectionActor(configuration: .test,
+            dependencies: dependencies(store: store, apply: { _ in applied.set() }, sleep: { delays.append($0) }),
+            retryPolicy: RetryPolicy(baseMilliseconds: 100, capMilliseconds: 1_000))
+        let run = await connection.start(); await run.value
+        let snapshot = await store.snapshot()
+        XCTAssertEqual(delays.values, [100])
+        XCTAssertEqual(snapshot.cursor, "1")
+        XCTAssertEqual(snapshot.appliedEventIds, [event.eventId])
+        XCTAssertNil(ScriptedURLProtocol.failure)
+    }
+
+    func testTLS_whenCertificateIsUntrusted_stopsWithoutRetryingOrAdvancingCursor() async throws {
+        let store = try DurableStateStore(url: temporaryStateURL())
+        let delays = LockedValues()
+        ScriptedURLProtocol.install([.failure("GET", "/v1/events", code: .serverCertificateUntrusted)])
+        let connection = ConnectionActor(configuration: .test,
+            dependencies: dependencies(store: store, sleep: { delays.append($0) }))
+        let run = await connection.start(); await run.value
+        let status = await connection.status
+        let snapshot = await store.snapshot()
+        XCTAssertEqual(status, .tlsFailed)
+        XCTAssertTrue(delays.values.isEmpty)
+        XCTAssertEqual(snapshot.cursor, "0")
+        XCTAssertEqual(ScriptedURLProtocol.requestCount, 1)
+    }
+
     func testStart_whenConcurrent_hasSingleOwnerAndCancelResumeCreatesOneNewGeneration() async throws {
         let store = try DurableStateStore(url: temporaryStateURL())
         let started = AsyncSignal()
@@ -207,6 +244,31 @@ final class ConnectionLoopTests: XCTestCase {
         let finalStatus = await connection.status
         XCTAssertEqual(secondGeneration, 2)
         XCTAssertEqual(finalStatus, .authenticationFailed)
+    }
+
+    func testOutboxChange_interruptsLongPollAndPublishesWithoutRestartingConnection() async throws {
+        let store = try DurableStateStore(url: temporaryStateURL())
+        let started = AsyncSignal()
+        ScriptedURLProtocol.install([
+            .hang("GET", "/v1/events"),
+            .response("POST", "/v1/events", status: 401, body: #"{"error":"unauthorized"}"#),
+        ], start: started)
+        let connection = makeConnection(store: store)
+        let run = await connection.start()
+        await started.wait()
+        let event = try await store.enqueueClipboard(text: "new copy during long poll", createdAtMs: 1)
+        let finished = expectation(description: "outbox publishes while the original GET is pending")
+        Task { await run.value; finished.fulfill() }
+        await connection.outboxChanged()
+        await fulfillment(of: [finished], timeout: 1)
+        let status = await connection.status
+        let snapshot = await store.snapshot()
+        await connection.stop()
+        XCTAssertEqual(status, .authenticationFailed)
+        XCTAssertEqual(snapshot.outbox.map(\.eventId), [event.eventId])
+        XCTAssertEqual(ScriptedURLProtocol.requestCount, 2)
+        XCTAssertEqual(ScriptedURLProtocol.cancelledHangCount, 1)
+        XCTAssertNil(ScriptedURLProtocol.failure)
     }
 
     private func dependencies(store: DurableStateStore,

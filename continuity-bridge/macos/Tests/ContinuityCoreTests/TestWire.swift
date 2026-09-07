@@ -77,10 +77,12 @@ final class ScriptedURLProtocol: URLProtocol, @unchecked Sendable {
     nonisolated(unsafe) private static var mismatch: String?
     nonisolated(unsafe) private static var requests = 0
     nonisolated(unsafe) private static var cancellations = 0
+    nonisolated(unsafe) private static var cancelledHangs = 0
     nonisolated(unsafe) private static var startSignal: AsyncSignal?
     nonisolated(unsafe) private static var cancellationSignal: AsyncSignal?
     private static let lock = NSLock()
     private var observedCancellationSignal: AsyncSignal?
+    private var isHanging = false
 
     static var configuration: URLSessionConfiguration {
         let configuration = URLSessionConfiguration.ephemeral
@@ -89,6 +91,7 @@ final class ScriptedURLProtocol: URLProtocol, @unchecked Sendable {
     }
     static var requestCount: Int { lock.withLock { requests } }
     static var cancellationCount: Int { lock.withLock { cancellations } }
+    static var cancelledHangCount: Int { lock.withLock { cancelledHangs } }
     static var failure: String? { lock.withLock { mismatch } }
 
     static func install(_ values: [ScriptStep], start: AsyncSignal? = nil,
@@ -98,6 +101,7 @@ final class ScriptedURLProtocol: URLProtocol, @unchecked Sendable {
             mismatch = nil
             requests = 0
             cancellations = 0
+            cancelledHangs = 0
             startSignal = start
             cancellationSignal = cancellation
         }
@@ -138,12 +142,15 @@ final class ScriptedURLProtocol: URLProtocol, @unchecked Sendable {
             client?.urlProtocol(self, didLoad: Data(body.utf8))
             client?.urlProtocolDidFinishLoading(self)
         case .failure(let code): fail(URLError(code))
-        case .hang: break
+        case .hang: isHanging = true
         }
     }
 
     override func stopLoading() {
-        Self.lock.withLock { Self.cancellations += 1 }
+        Self.lock.withLock {
+            Self.cancellations += 1
+            if isHanging { Self.cancelledHangs += 1 }
+        }
         observedCancellationSignal?.signal()
     }
     private func fail(_ error: Error) { client?.urlProtocol(self, didFailWithError: error) }
