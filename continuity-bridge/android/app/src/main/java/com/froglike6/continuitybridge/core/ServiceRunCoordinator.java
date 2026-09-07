@@ -1,11 +1,17 @@
 package com.froglike6.continuitybridge;
 
 final class ServiceRunCoordinator {
+    private static final ServiceRunCoordinator PROCESS = new ServiceRunCoordinator();
+
     static final class Run {
         private Run() { }
     }
 
     private Run active;
+
+    static ServiceRunCoordinator process() { return PROCESS; }
+
+    synchronized boolean hasActiveRun() { return active != null; }
 
     synchronized Run start() {
         if (active != null) return null;

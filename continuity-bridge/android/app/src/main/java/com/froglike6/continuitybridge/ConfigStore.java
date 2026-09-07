@@ -16,7 +16,10 @@ final class ConfigStore {
     String deviceId() { return stable("device_id", "android-"); }
     String epoch() { return stable("origin_epoch", "epoch-"); }
     ConnectionStatus status() {
-        try { return ConnectionStatus.valueOf(values.getString(RUNTIME_STATUS, ConnectionStatus.STOPPED.name())); }
+        try {
+            ConnectionStatus persisted = ConnectionStatus.valueOf(values.getString(RUNTIME_STATUS, ConnectionStatus.STOPPED.name()));
+            return UiStatePolicy.reconcileServiceStatus(persisted, ServiceRunCoordinator.process().hasActiveRun());
+        }
         catch (IllegalArgumentException error) { return ConnectionStatus.DISCONNECTED; }
     }
     void status(ConnectionStatus status) { values.edit().putString(RUNTIME_STATUS, status.name()).apply(); }

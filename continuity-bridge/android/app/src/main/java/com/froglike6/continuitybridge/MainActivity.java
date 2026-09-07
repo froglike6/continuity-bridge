@@ -22,6 +22,7 @@ import android.widget.ScrollView;
 import android.widget.TextView;
 
 public final class MainActivity extends Activity {
+    private static final int NOTIFICATION_PERMISSION_REQUEST = 10;
     private TextView status;
     private TextView helper;
     private EditText endpoint;
@@ -73,7 +74,14 @@ public final class MainActivity extends Activity {
     @Override protected void onResume() { super.onResume(); refresh(); }
 
     @Override public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
-        super.onRequestPermissionsResult(requestCode, permissions, grantResults); refresh();
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+        boolean notificationRequest = requestCode == NOTIFICATION_PERMISSION_REQUEST && permissions.length == 1
+                && Manifest.permission.POST_NOTIFICATIONS.equals(permissions[0]);
+        boolean granted = grantResults.length == 1 && grantResults[0] == PackageManager.PERMISSION_GRANTED;
+        ConnectionStatus current = config.status();
+        ConnectionStatus reconciled = UiStatePolicy.afterPermissionResult(current, notificationRequest, granted);
+        if (reconciled != current) config.status(reconciled);
+        refresh();
     }
 
     @Override protected void onStart() { super.onStart(); config.observe(statusObserver); refresh(); }
@@ -85,7 +93,7 @@ public final class MainActivity extends Activity {
             config.save(endpoint.getText().toString().trim(), pin.getText().toString().trim(), systemTrust.isChecked());
             String enteredToken = token.getText().toString(); if (!enteredToken.isEmpty()) new TokenStore(this).put(enteredToken);
             if (android.os.Build.VERSION.SDK_INT >= 33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
-                config.status(ConnectionStatus.PERMISSION_REQUIRED); requestPermissions(new String[] { Manifest.permission.POST_NOTIFICATIONS }, 10); refresh(); return;
+                config.status(ConnectionStatus.PERMISSION_REQUIRED); requestPermissions(new String[] { Manifest.permission.POST_NOTIFICATIONS }, NOTIFICATION_PERMISSION_REQUEST); refresh(); return;
             }
             startForegroundService(new Intent(this, BridgeService.class)); helper.setText("서비스 연결을 시작했습니다."); refresh();
         } catch (Exception error) { helper.setText("설정을 확인해 주세요: " + safeReason(error)); }
@@ -101,12 +109,12 @@ public final class MainActivity extends Activity {
     private void refresh() {
         if (status == null) return;
         ConnectionStatus value = config.status();
-        ConnectionStatus reconciled = UiStatePolicy.reconcilePermissionStatus(value, notificationPermissionGranted());
-        if (reconciled != value) { config.status(reconciled); value = reconciled; }
         status.setText(value.korean());
         status.setContentDescription("연결 상태: " + value.korean());
         if (value == ConnectionStatus.AUTH_FAILURE || value == ConnectionStatus.TLS_FAILURE || value == ConnectionStatus.SECURITY_FAILURE) helper.setText("설정과 보안 저장소를 확인한 뒤 다시 시작해 주세요.");
-        else if (value == ConnectionStatus.PERMISSION_REQUIRED) helper.setText("알림 권한을 허용해야 서비스 상태를 계속 표시할 수 있습니다.");
+        else if (value == ConnectionStatus.PERMISSION_REQUIRED) helper.setText(notificationPermissionGranted()
+                ? "클립보드: " + config.clipboardCapability() + "\n알림 권한은 허용되어 있습니다. 화면 잠금을 해제하고 클립보드 접근, 다른 앱 위 표시 및 로그 읽기 권한을 확인한 뒤 시작을 눌러 다시 시도해 주세요."
+                : "알림 권한을 허용해야 서비스 상태를 계속 표시할 수 있습니다.");
         else if (value == ConnectionStatus.RETRY) helper.setText("일시적인 연결 문제로 제한된 간격 후 다시 시도합니다.");
         else helper.setText("클립보드: " + config.clipboardCapability() + "\n알림 접근: "
                 + (config.listenerState().connected() ? "연결됨" : "연결 안 됨") + "\n알림 큐: "

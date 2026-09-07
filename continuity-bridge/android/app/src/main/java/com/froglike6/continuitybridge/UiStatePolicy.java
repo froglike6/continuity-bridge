@@ -4,12 +4,20 @@ public final class UiStatePolicy {
     private UiStatePolicy() { }
 
     public static Decision forStatus(ConnectionStatus status, boolean systemTrust) {
-        boolean active = status == ConnectionStatus.CONNECTING || status == ConnectionStatus.CONNECTED || status == ConnectionStatus.RETRY;
+        boolean active = requiresServiceRun(status);
         return new Decision(!active, active, !active, !active && !systemTrust);
     }
 
-    public static ConnectionStatus reconcilePermissionStatus(ConnectionStatus status, boolean notificationPermissionGranted) {
-        return status == ConnectionStatus.PERMISSION_REQUIRED && notificationPermissionGranted ? ConnectionStatus.STOPPED : status;
+    public static ConnectionStatus afterPermissionResult(ConnectionStatus status, boolean notificationRequest, boolean granted) {
+        return status == ConnectionStatus.PERMISSION_REQUIRED && notificationRequest && granted ? ConnectionStatus.STOPPED : status;
+    }
+
+    public static ConnectionStatus reconcileServiceStatus(ConnectionStatus status, boolean serviceRunActive) {
+        return requiresServiceRun(status) && !serviceRunActive ? ConnectionStatus.STOPPED : status;
+    }
+
+    private static boolean requiresServiceRun(ConnectionStatus status) {
+        return status == ConnectionStatus.CONNECTING || status == ConnectionStatus.CONNECTED || status == ConnectionStatus.RETRY;
     }
 
     public static final class Decision {

@@ -23,7 +23,8 @@ final class RelayTransport implements BridgeTransport {
     private final Settings settings;
     private final ConnectionFactory connections;
     private final DiagnosticSink diagnostics;
-    private volatile HttpsURLConnection active;
+    private Request active;
+    private boolean pollWakePending;
     private volatile boolean cancelled;
 
     RelayTransport(Context context, final ConfigStore config) {
@@ -51,18 +52,47 @@ final class RelayTransport implements BridgeTransport {
         body.put("recipientDeviceId", deviceId); body.put("recipientRole", "android"); body.put("eventIds", eventIds);
         return request(token, "POST", "/v1/acks", MiniJson.encode(body));
     }
-    @Override public synchronized void cancel() { cancelled = true; HttpsURLConnection connection = active; if (connection != null) connection.disconnect(); }
+    @Override public void cancel() {
+        Request request;
+        synchronized (this) { cancelled = true; request = active; }
+        if (request != null) request.connection.disconnect();
+    }
+
+    void wakePoll() {
+        Request request;
+        synchronized (this) {
+            if (cancelled) return;
+            request = active;
+            if (request == null || !request.poll) { pollWakePending = true; return; }
+            request.woken = true;
+        }
+        request.connection.disconnect();
+    }
+
+    private synchronized void checkRequest(Request request) throws java.io.IOException {
+        if (cancelled) throw new CancelledTransportException();
+        if (request.woken) throw new PollWakeException();
+    }
+
+    private static final class Request {
+        final HttpsURLConnection connection;
+        final boolean poll;
+        boolean woken;
+        Request(HttpsURLConnection connection, boolean poll) { this.connection = connection; this.poll = poll; }
+    }
 
     private TransportResponse request(String token, String method, String path, String body) throws Exception {
         URI base = ConfigValidator.httpsUrl(settings.endpoint());
         URL target = new URI(base.getScheme(), null, base.getHost(), base.getPort(), path.substring(0, path.indexOf('?') < 0 ? path.length() : path.indexOf('?')),
                 path.indexOf('?') < 0 ? null : path.substring(path.indexOf('?') + 1), null).toURL();
         HttpsURLConnection connection = connections.open(target);
-        synchronized (this) {
-            if (cancelled) { connection.disconnect(); throw new CancelledTransportException(); }
-            active = connection;
-        }
+        Request request = new Request(connection, "GET".equals(method));
         try {
+            synchronized (this) {
+                if (cancelled) throw new CancelledTransportException();
+                if (request.poll && pollWakePending) { pollWakePending = false; throw new PollWakeException(); }
+                active = request;
+            }
             if (!settings.systemTrust()) {
                 InputStream ca = context.getResources().openRawResource(R.raw.continuity_local_ca);
                 try {
@@ -78,6 +108,12 @@ final class RelayTransport implements BridgeTransport {
                 connection.setFixedLengthStreamingMode(bytes.length); connection.setRequestProperty("Content-Type", "application/json; charset=utf-8");
                 OutputStream output = connection.getOutputStream(); try { output.write(bytes); } finally { output.close(); }
             }
+            checkRequest(request);
+            if (request.poll) {
+                // Android ignores disconnect before connect; check again before waiting for response headers.
+                connection.connect();
+                checkRequest(request);
+            }
             int status = connection.getResponseCode();
             InputStream stream = status >= 400 ? connection.getErrorStream() : connection.getInputStream();
             TransportResponse response = new TransportResponse(status, stream == null ? "" : read(stream));
@@ -86,13 +122,13 @@ final class RelayTransport implements BridgeTransport {
             return response;
         } catch (IllegalArgumentException error) { throw error;
         } catch (java.io.IOException error) {
-            if (!cancelled) throw error;
-            throw new CancelledTransportException();
+            checkRequest(request);
+            throw error;
         } catch (Exception securityError) {
             javax.net.ssl.SSLException failure = new javax.net.ssl.SSLException("tls_policy_setup_failed");
             failure.initCause(securityError); throw failure;
         } finally {
-            synchronized (this) { if (active == connection) active = null; }
+            synchronized (this) { if (active == request) active = null; }
             connection.disconnect();
         }
     }

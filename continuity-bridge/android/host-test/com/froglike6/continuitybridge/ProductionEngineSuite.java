@@ -22,6 +22,7 @@ final class ProductionEngineSuite {
         count += cursorApplyAck(fixtures);
         count += fullEpochMetadataWithholdsApplyAndAck(fixtures);
         count += applyWithholdsAck(fixtures);
+        count += unconfirmedClipboardWithholdsAck(fixtures);
         count += restartAroundAck(fixtures);
         count += serverEpochReset(fixtures);
         count += publishRetry(fixtures);
@@ -31,6 +32,7 @@ final class ProductionEngineSuite {
         count += corruptToken(fixtures);
         count += productionClassification(fixtures);
         count += stopLongPoll(fixtures);
+        count += stopDuringApply(fixtures);
         count += interruptedPersistence(fixtures);
         count += responseBoundaries(fixtures);
         count += connectionPresentation();
@@ -161,6 +163,29 @@ final class ProductionEngineSuite {
             check(store.load().pendingAcks().isEmpty() && applier.applied.size() == 1, "restart re-applied or retained ack");
             return 5;
         } finally { deleteTree(directory); }
+    }
+
+    private static int unconfirmedClipboardWithholdsAck(Path fixtures) throws Exception {
+        ProtocolEvent event = EventCodec.decode(fixtures.resolve("macos-clipboard.json"));
+        Harness harness = Harness.create(fixtures, eventFetch(fetch("0", "2", "2", event)));
+        ClipboardSurface unavailableReadback = new ClipboardSurface() {
+            @Override public boolean set(String eventId, String text) { return true; }
+            @Override public boolean confirm(String eventId, String text) { return false; }
+        };
+        ClipboardApplyTransaction transaction = new ClipboardApplyTransaction(harness.store, unavailableReadback);
+        BridgeEngine engine = new BridgeEngine(harness.store, harness.transport, new FixedToken(), new EventApplier() {
+            @Override public boolean apply(ProtocolEvent incoming) { return transaction.apply(incoming); }
+        }, harness.owner);
+        // Given: the platform write returns normally but its resulting clipboard cannot be verified.
+        // When: the production engine delivers the relay event to the real apply transaction.
+        BridgeEngine.Result result = engine.step(harness.lease);
+        BridgeState state = harness.store.load();
+        // Then: retain only the echo-suppression intent, never a completed application or ACK.
+        check(result.status() == BridgeEngine.Status.PERMISSION_REQUIRED && harness.transport.acked.isEmpty()
+                        && state.appliedIds().isEmpty() && state.pendingAcks().isEmpty() && "0".equals(state.cursor())
+                        && event.eventId().equals(state.remoteApplyId()),
+                "unverified clipboard application advanced delivery or lost durable remote intent");
+        return 1;
     }
 
     private static int serverEpochReset(Path fixtures) throws Exception {
@@ -294,6 +319,26 @@ final class ProductionEngineSuite {
             catch (IOException expected) { check(new AtomicStateFile(path, cipher).load().outbox().isEmpty(), "recovered backup was replaced by corrupt primary"); }
             return 3;
         } finally { deleteTree(directory); }
+    }
+
+    private static int stopDuringApply(Path fixtures) throws Exception {
+        ProtocolEvent event = EventCodec.decode(fixtures.resolve("macos-clipboard.json"));
+        Harness harness = Harness.create(fixtures, eventFetch(fetch("0", "3", "3", event)));
+        // Given: Stop occurs while the platform is confirming an already completed application.
+        EventApplier stopAfterApply = new EventApplier() {
+            @Override public boolean apply(ProtocolEvent incoming) {
+                harness.owner.cancel(harness.lease);
+                return true;
+            }
+        };
+        BridgeEngine engine = new BridgeEngine(harness.store, harness.transport, new FixedToken(), stopAfterApply, harness.owner);
+        // When: that application completes after the lease was cancelled.
+        BridgeEngine.Result result = engine.step(harness.lease);
+        // Then: keep the completed application durable, without making another network request.
+        check(result.status() == BridgeEngine.Status.STOPPED && harness.transport.acked.isEmpty()
+                        && harness.store.load().pendingAcks().contains(event.eventId()),
+                "cancelled apply issued ACK instead of deferring its durable completion to the next run");
+        return 1;
     }
 
     private static int responseBoundaries(Path fixtures) throws Exception {

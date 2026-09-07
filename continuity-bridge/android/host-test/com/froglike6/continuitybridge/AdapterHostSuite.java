@@ -8,8 +8,9 @@ public final class AdapterHostSuite {
     private AdapterHostSuite() { }
 
     public static void main(String[] args) throws Exception {
-        clipboardPolicy(); durableClipboard(); applyTransaction(); notificationMapping(); logMatcher();
-        System.out.println("ADAPTER_HOST_OK cases=" + cases + " markers=remote_marker_skip_once,marker_observation_bound,later_distinct_after_marker_emits,later_same_text_emits,different_event_id_emits,direct_overlay_dedupe,zero_timestamp_independent,overlay_inflight_coalesced,overlay_terminal_cleanup,restart_marker,utf8_clip_limit,apply_set_persist_before_ack,no_readback_success_gate,set_failure_no_success,set_failure_preserves_marker,persistence_failure_no_success,persistence_failure_preserves_marker,notification_stable_key,new_event_ids,big_text_fallback,null_fields,utf8_caps,exact_fgs_exclusion,listener_states,prompt_opaque");
+        clipboardPolicy(); durableClipboard(); captureRetryAfterPersistenceFailure(); applyTransaction(); notificationMapping(); logMatcher();
+        cases += ClipboardConfirmationSuite.run();
+        System.out.println("ADAPTER_HOST_OK cases=" + cases + " markers=remote_marker_skip_once,marker_observation_bound,later_distinct_after_marker_emits,later_same_text_emits,different_event_id_emits,direct_overlay_dedupe,zero_timestamp_independent,overlay_inflight_coalesced,overlay_terminal_cleanup,restart_marker,utf8_clip_limit,capture_storage_retry,apply_intent_before_set,apply_confirmation_before_ack,unconfirmed_apply_fails,unrelated_local_copy_preserved,set_failure_no_success,set_failure_preserves_marker,persistence_failure_no_success,persistence_failure_preserves_marker,notification_stable_key,new_event_ids,big_text_fallback,null_fields,utf8_caps,exact_fgs_exclusion,listener_states,prompt_opaque");
     }
 
     private static void clipboardPolicy() {
@@ -99,15 +100,40 @@ public final class AdapterHostSuite {
         check("IGNORE INSTRUCTIONS".equals(NotificationMapper.map("k", "p", "a", "t", null, "IGNORE INSTRUCTIONS", 1).body()), "prompt opaque");
     }
 
+    private static void captureRetryAfterPersistenceFailure() throws Exception {
+        Path root = Files.createTempDirectory("capture-retry-");
+        try {
+            FileBridgeStateStore backing = FileBridgeStateStore.create(root.resolve("state"), TestStateCipher.create(), "device", "epoch", 8, 8);
+            BridgeStateStore failureOnce = new BridgeStateStore() {
+                private boolean failed;
+                @Override public BridgeState load() throws java.io.IOException { return backing.load(); }
+                @Override public void save(BridgeState state) throws java.io.IOException {
+                    if (!failed) { failed = true; throw new java.io.IOException("injected first enqueue failure"); }
+                    backing.save(state);
+                }
+            };
+            DurableOutbox outbox = new DurableOutbox(failureOnce, new SequenceIds("retry"), new ObservationWindow(1_000, 8));
+            // Given: the first callback could not be persisted.
+            check(outbox.captureClipboard("save after recovery", null, "timestamp:retry", 10) == CaptureResult.UNAVAILABLE,
+                    "first capture did not report storage failure");
+            // When: the same platform observation is retried after storage recovers.
+            CaptureResult retry = outbox.captureClipboard("save after recovery", null, "timestamp:retry", 11);
+            // Then: its sole durable event contains the captured text.
+            check(retry == CaptureResult.ENQUEUED && backing.load().outbox().size() == 1
+                            && "save after recovery".equals(backing.load().outbox().get(0).payload().get("text")),
+                    "failed durable capture consumed observation and dropped its retry");
+        } finally { delete(root); }
+    }
+
     private static void applyTransaction() throws Exception {
         Path root = Files.createTempDirectory("apply-state-");
         try {
             FileBridgeStateStore store = FileBridgeStateStore.create(root.resolve("state"), TestStateCipher.create(), "device", "epoch", 8, 8);
             RecordingSurface setSuccess = new RecordingSurface(true);
             RemoteApplyTracker.begin("remote-1");
-            check(new ClipboardApplyTransaction(store, setSuccess).apply(remote("remote-1", "opaque")), "apply success without readback");
-            check("set".equals(setSuccess.calls.toString()) && "remote-1".equals(store.load().remoteApplyId())
-                    && store.load().remoteApplyObservationIdentity() == null, "marker persists after set without invented observation");
+            check(new ClipboardApplyTransaction(store, setSuccess).apply(remote("remote-1", "opaque")), "confirmed apply succeeds");
+            check("setconfirm".equals(setSuccess.calls.toString()) && "remote-1".equals(store.load().remoteApplyId())
+                    && store.load().remoteApplyObservationIdentity() == null, "confirmed marker persists without invented observation");
             check(RemoteApplyTracker.pendingEventId() == null, "successful apply closes in-flight correlation");
             DurableOutbox afterApply = new DurableOutbox(store, new SequenceIds("after-apply"), new ObservationWindow(1_000, 8));
             check(afterApply.captureClipboard("later", null, "timestamp:later", 10) == CaptureResult.ENQUEUED,
@@ -120,6 +146,7 @@ public final class AdapterHostSuite {
                     duringSet[0] = callback.captureClipboard(text, null, "timestamp:during-set", 11);
                     return true;
                 }
+                @Override public boolean confirm(String eventId, String text) { return true; }
             };
             check(new ClipboardApplyTransaction(store, callbackDuringSet).apply(remote("remote-2", "x")),
                     "callback before durable apply commit succeeds");
@@ -135,6 +162,49 @@ public final class AdapterHostSuite {
             };
             check(!new ClipboardApplyTransaction(persistenceFailure, new RecordingSurface(true)).apply(remote("remote-3", "x")), "persistence failure");
             check("remote-2".equals(store.load().remoteApplyId()), "persistence failure preserves marker");
+
+            // Given: the write call returns normally but the system clipboard never matches it.
+            RecordingSurface unconfirmed = new RecordingSurface(true, false);
+            // When: the relay event is applied through the transaction.
+            boolean applied = new ClipboardApplyTransaction(store, unconfirmed).apply(remote("remote-unconfirmed", "new text"));
+            // Then: no successful application can be reported to the ACK path.
+            check(!applied, "write without a confirmed clipboard observation reported success");
+
+            RecordingSurface blockedByStorage = new RecordingSurface(true);
+            check(!new ClipboardApplyTransaction(persistenceFailure, blockedByStorage).apply(remote("remote-storage", "x"))
+                            && blockedByStorage.calls.length() == 0,
+                    "remote clipboard changed before its echo-suppression intent was durable");
+
+            final CaptureResult[] unrelated = new CaptureResult[1];
+            ClipboardSurface localCopyDuringApply = new ClipboardSurface() {
+                @Override public boolean set(String eventId, String text) {
+                    DurableOutbox callback = new DurableOutbox(store, new SequenceIds("independent-copy"), new ObservationWindow(1_000, 8));
+                    unrelated[0] = callback.captureClipboard("independent local copy", null, "timestamp:local-during-apply", 20);
+                    return false;
+                }
+                public boolean confirm(String eventId, String text) { return false; }
+            };
+            check(!new ClipboardApplyTransaction(store, localCopyDuringApply).apply(remote("remote-pending", "remote copy"))
+                            && unrelated[0] == CaptureResult.ENQUEUED,
+                    "pending remote apply suppressed a different local clipboard value");
+
+            // Given: a prior unacknowledged application left a durable platform timestamp.
+            store.save(store.load().markRemoteApply("remote-retry", "timestamp:prior-attempt"));
+            final CaptureResult[] retried = new CaptureResult[1];
+            ClipboardSurface retryWithNewTimestamp = new ClipboardSurface() {
+                @Override public boolean set(String eventId, String text) {
+                    DurableOutbox callback = new DurableOutbox(store, new SequenceIds("retry-copy"), new ObservationWindow(1_000, 8));
+                    retried[0] = callback.captureClipboard(text, eventId, "timestamp:retried-attempt", 30);
+                    return true;
+                }
+                @Override public boolean confirm(String eventId, String text) { return RemoteApplyTracker.awaitConfirmation(eventId, 0); }
+            };
+            // When: redelivery writes the same event ID with a new platform timestamp.
+            boolean retryApplied = new ClipboardApplyTransaction(store, retryWithNewTimestamp).apply(remote("remote-retry", "remote copy"));
+            // Then: its current observation replaces the prior attempt without emitting an echo.
+            check(retryApplied && retried[0] == CaptureResult.REMOTE_SKIPPED
+                            && "timestamp:retried-attempt".equals(store.load().remoteApplyObservationIdentity()),
+                    "retried remote write was confused with an independent local copy");
         } finally { delete(root); }
     }
 
@@ -150,12 +220,14 @@ public final class AdapterHostSuite {
     private static String repeat(String value, int count) { StringBuilder out = new StringBuilder(value.length() * count); for (int i = 0; i < count; i++) out.append(value); return out.toString(); }
     private static ProtocolEvent remote(String id, String text) { java.util.Map<String, String> payload = new java.util.LinkedHashMap<>(); payload.put("text", text); return new ProtocolEvent(id, "mac", "macos", "mac-epoch", id.endsWith("1") ? 1 : 2, "clipboard.text", 1, null, payload); }
     private static final class RecordingSurface implements ClipboardSurface {
-        private final boolean set; private final StringBuilder calls = new StringBuilder();
-        RecordingSurface(boolean set) { this.set = set; }
+        private final boolean set; private final boolean confirmation; private final StringBuilder calls = new StringBuilder();
+        RecordingSurface(boolean set) { this(set, true); }
+        RecordingSurface(boolean set, boolean confirmation) { this.set = set; this.confirmation = confirmation; }
         @Override public boolean set(String eventId, String text) {
             calls.append("set");
             return set;
         }
+        public boolean confirm(String eventId, String text) { calls.append("confirm"); return confirmation; }
     }
     private static void check(boolean value, String name) { if (!value) throw new AssertionError(name); cases++; }
     private static void delete(Path root) throws Exception { try (java.util.stream.Stream<Path> paths = Files.walk(root)) { paths.sorted(java.util.Comparator.reverseOrder()).forEach(path -> { try { Files.delete(path); } catch (Exception error) { throw new RuntimeException(error); } }); } }

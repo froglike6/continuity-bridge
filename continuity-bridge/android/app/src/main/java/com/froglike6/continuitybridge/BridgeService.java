@@ -12,7 +12,7 @@ import java.util.Random;
 public final class BridgeService extends Service {
     static final String CHANNEL_ID = "continuity_bridge_status";
     static final int STATUS_NOTIFICATION_ID = 3103;
-    private final ServiceRunCoordinator runs = new ServiceRunCoordinator();
+    private final ServiceRunCoordinator runs = ServiceRunCoordinator.process();
     private volatile Worker activeWorker;
 
     @Override public void onCreate() {
@@ -22,7 +22,9 @@ public final class BridgeService extends Service {
     @Override public int onStartCommand(Intent intent, int flags, int startId) {
         ServiceRunCoordinator.Run run = runs.start();
         if (run != null) {
-            Worker worker = new Worker(run); activeWorker = worker; worker.thread.start();
+            Worker worker = new Worker(run); activeWorker = worker;
+            publishStatus(run, ConnectionStatus.CONNECTING, null);
+            worker.thread.start();
         }
         return START_NOT_STICKY;
     }
@@ -41,16 +43,21 @@ public final class BridgeService extends Service {
         try {
             ConnectionOwner owner = new ConnectionOwner(); RelayTransport transport = new RelayTransport(this, config);
             BridgeRepository repository = BridgeRepository.get(this); FileBridgeStateStore state = repository.store();
-            AndroidClipboardApplier applier = new AndroidClipboardApplier(getSystemService(android.content.ClipboardManager.class), state);
+            AndroidClipboardApplier applier = new AndroidClipboardApplier(this, state);
             BridgeEngine engine = new BridgeEngine(state, transport, new TokenStore(this), applier, owner);
             ConnectionOwner.Lease lease = owner.start(); ClipboardCaptureController clipboardCapture = new ClipboardCaptureController(this, repository.outbox());
-            if (!worker.attach(engine, lease, clipboardCapture)) return;
-            clipboardCapture.start();
+            if (!worker.attach(engine, lease, clipboardCapture, repository.outbox(), transport)) return;
+            synchronized (runs) {
+                if (!runs.owns(worker.run)) return;
+                clipboardCapture.start();
+            }
             BridgeEngine.Status previous = null;
             while (runs.owns(worker.run) && !Thread.currentThread().isInterrupted()) {
                 if (ConnectionPresentation.showConnectingBeforeAttempt(previous)
                         && !publishStatus(worker.run, ConnectionStatus.CONNECTING, null)) return;
-                BridgeEngine.Result result = engine.step(lease); previous = result.status();
+                BridgeEngine.Result result = engine.step(lease);
+                if (result.status() == BridgeEngine.Status.OUTBOX_READY) continue;
+                previous = result.status();
                 if (!publishStatus(worker.run, status(previous), result.errorClass())) return;
                 if (result.status() == BridgeEngine.Status.CONNECTED) { attempt = 0; continue; }
                 if (result.status() == BridgeEngine.Status.RETRY) { pause(retry.delayMs(attempt++)); continue; }
@@ -70,6 +77,8 @@ public final class BridgeService extends Service {
         private BridgeEngine engine;
         private ConnectionOwner.Lease lease;
         private ClipboardCaptureController capture;
+        private DurableOutbox outbox;
+        private Runnable enqueueObserver;
         private boolean cancelled;
 
         Worker(ServiceRunCoordinator.Run run) {
@@ -77,14 +86,18 @@ public final class BridgeService extends Service {
             thread = new Thread(new Runnable() { @Override public void run() { connectLoop(Worker.this); } }, "continuity-relay-connection");
         }
 
-        synchronized boolean attach(BridgeEngine engine, ConnectionOwner.Lease lease, ClipboardCaptureController capture) {
+        synchronized boolean attach(BridgeEngine engine, ConnectionOwner.Lease lease, ClipboardCaptureController capture, DurableOutbox outbox, final RelayTransport transport) {
             if (cancelled) { cancelEngine(engine, lease); return false; }
-            this.engine = engine; this.lease = lease; this.capture = capture; return true;
+            this.engine = engine; this.lease = lease; this.capture = capture; this.outbox = outbox;
+            enqueueObserver = new Runnable() { @Override public void run() { transport.wakePoll(); } };
+            outbox.observeEnqueue(enqueueObserver);
+            return true;
         }
 
         synchronized void cancel() { cancelled = true; close(); thread.interrupt(); }
 
         synchronized void close() {
+            if (outbox != null) { outbox.stopObservingEnqueue(enqueueObserver); outbox = null; enqueueObserver = null; }
             if (capture != null) { capture.stop(); capture = null; }
             if (engine != null && lease != null) { cancelEngine(engine, lease); engine = null; lease = null; }
         }

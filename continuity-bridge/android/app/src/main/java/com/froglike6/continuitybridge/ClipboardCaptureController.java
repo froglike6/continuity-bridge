@@ -34,6 +34,7 @@ final class ClipboardCaptureController {
         clipboard = context.getSystemService(ClipboardManager.class);
         listener = new ClipboardManager.OnPrimaryClipChangedListener() {
             @Override public void onPrimaryClipChanged() {
+                if (stopping) return;
                 String identity = "callback:" + observationEpoch + ":" + observationSequence.incrementAndGet();
                 lastObservationIdentity = identity;
                 capture(identity);
@@ -51,8 +52,12 @@ final class ClipboardCaptureController {
     }
 
     void stop() {
-        stopping = true; clipboard.removePrimaryClipChangedListener(listener);
-        if (logcat != null) logcat.destroy(); if (reader != null) reader.interrupt();
+        synchronized (this) {
+            stopping = true;
+            if (logcat != null) logcat.destroy();
+        }
+        clipboard.removePrimaryClipChangedListener(listener);
+        if (reader != null) reader.interrupt();
     }
 
     CaptureResult capture(String fallbackIdentity) {
@@ -77,18 +82,32 @@ final class ClipboardCaptureController {
     }
 
     private void readDenials() {
+        Process process = null;
         try {
-            logcat = new ProcessBuilder("logcat", "-v", "brief", "-T", "1", "ClipboardService:E", "*:S").redirectErrorStream(true).start();
-            try (BufferedReader lines = new BufferedReader(new InputStreamReader(logcat.getInputStream()))) {
+            process = new ProcessBuilder("logcat", "-v", "brief", "-T", "1", "ClipboardService:E", "*:S").redirectErrorStream(true).start();
+            synchronized (this) {
+                logcat = process;
+                if (stopping) return;
+            }
+            try (BufferedReader lines = new BufferedReader(new InputStreamReader(process.getInputStream()))) {
                 String line; while (!stopping && (line = lines.readLine()) != null) if (ClipboardDenialMatcher.matches(line, context.getPackageName())) requestOverlay();
             }
         } catch (IOException error) { if (!stopping) new ConfigStore(context).clipboardCapability("로그 감지 실패"); }
+        finally {
+            if (process != null) process.destroy();
+            synchronized (this) { if (logcat == process) logcat = null; }
+        }
     }
 
     private void requestOverlay() {
-        if (!Settings.canDrawOverlays(context)) { new ConfigStore(context).clipboardCapability("다른 앱 위 표시 권한 필요"); return; }
+        if (stopping) return;
         String candidate = lastObservationIdentity;
-        if (candidate == null) candidate = "denial:" + observationSequence.incrementAndGet();
+        if (candidate == null) candidate = "denial:" + observationEpoch + ":" + observationSequence.incrementAndGet();
+        requestOverlay(context, candidate);
+    }
+
+    static void requestOverlay(Context context, String candidate) {
+        if (!Settings.canDrawOverlays(context)) { new ConfigStore(context).clipboardCapability("다른 앱 위 표시 권한 필요"); return; }
         String identity = OVERLAY_GATE.begin(candidate); if (identity == null) return;
         Intent intent = new Intent(context, ClipboardOverlayActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK
                 | Intent.FLAG_ACTIVITY_EXCLUDE_FROM_RECENTS | Intent.FLAG_ACTIVITY_NO_ANIMATION).putExtra(EXTRA_OBSERVATION_ID, identity);

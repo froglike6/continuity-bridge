@@ -3,17 +3,21 @@ package com.froglike6.continuitybridge;
 import android.content.ClipData;
 import android.content.ClipDescription;
 import android.content.ClipboardManager;
+import android.content.Context;
 import android.os.PersistableBundle;
 
 final class AndroidClipboardApplier implements EventApplier {
     static final String EVENT_ID_EXTRA = "com.froglike6.continuitybridge.EVENT_ID";
+    private final Context context;
     private final ClipboardManager clipboard;
     private final ClipboardApplyTransaction transaction;
 
-    AndroidClipboardApplier(ClipboardManager clipboard, BridgeStateStore store) {
-        this.clipboard = clipboard;
+    AndroidClipboardApplier(Context context, BridgeStateStore store) {
+        this.context = context;
+        this.clipboard = context.getSystemService(ClipboardManager.class);
         transaction = new ClipboardApplyTransaction(store, new ClipboardSurface() {
             @Override public boolean set(String eventId, String text) { return setClip(eventId, text); }
+            @Override public boolean confirm(String eventId, String text) { return confirmClip(eventId); }
         });
     }
 
@@ -27,12 +31,24 @@ final class AndroidClipboardApplier implements EventApplier {
             ClipData clip = ClipData.newPlainText("Continuity Bridge", text);
             PersistableBundle extras = new PersistableBundle(); extras.putString(EVENT_ID_EXTRA, eventId);
             clip.getDescription().setExtras(extras); clipboard.setPrimaryClip(clip);
-            ClipDescription observed = clipboard.getPrimaryClipDescription();
-            if (observed != null && observed.getTimestamp() != 0) {
-                RemoteApplyTracker.bindObservation(eventId, "timestamp:" + observed.getTimestamp());
-            }
             return true;
         } catch (RuntimeException error) { return false; }
+    }
+
+    private boolean confirmClip(String eventId) {
+        try {
+            ClipData observed = clipboard.getPrimaryClip();
+            if (observed != null && observed.getItemCount() == 1 && observed.getItemAt(0).getText() != null) {
+                long timestamp = observed.getDescription().getTimestamp();
+                String identity = timestamp == 0 ? "apply:" + eventId : "timestamp:" + timestamp;
+                if (RemoteApplyTracker.confirm(marker(observed.getDescription()), observed.getItemAt(0).getText().toString(), identity)) return true;
+            }
+        } catch (SecurityException unavailable) { }
+        if (Thread.currentThread().isInterrupted()) return false;
+        ClipboardCaptureController.requestOverlay(context, "apply:" + eventId);
+        boolean confirmed = RemoteApplyTracker.awaitConfirmation(eventId, 2_000);
+        if (!confirmed) new ConfigStore(context).clipboardCapability("클립보드 적용 확인 필요");
+        return confirmed;
     }
 
     static String marker(ClipDescription description) {

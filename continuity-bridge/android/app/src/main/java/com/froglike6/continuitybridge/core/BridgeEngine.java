@@ -6,7 +6,7 @@ import java.util.List;
 import javax.net.ssl.SSLException;
 
 public final class BridgeEngine {
-    public enum Status { CONNECTED, PERMISSION_REQUIRED, AUTH_FAILURE, TLS_FAILURE, SECURITY_FAILURE, PROTOCOL_FAILURE, RETRY, STOPPED }
+    public enum Status { CONNECTED, OUTBOX_READY, PERMISSION_REQUIRED, AUTH_FAILURE, TLS_FAILURE, SECURITY_FAILURE, PROTOCOL_FAILURE, RETRY, STOPPED }
     public static final class Result {
         private final Status status; private final String errorClass;
         Result(Status status, String errorClass) { this.status = status; this.errorClass = errorClass; }
@@ -34,6 +34,7 @@ public final class BridgeEngine {
             if (ackResult != null) return ackResult;
             state = store.load();
             for (ProtocolEvent event : state.outbox()) {
+                if (!owner.owns(lease)) return result(Status.STOPPED, null);
                 TransportResponse response = transport.publish(token, event);
                 if (!owner.owns(lease)) return result(Status.STOPPED, null);
                 Result status = httpFailure(response.status()); if (status != null) return status;
@@ -48,6 +49,7 @@ public final class BridgeEngine {
                     }
                 });
             }
+            if (!owner.owns(lease)) return result(Status.STOPPED, null);
             String pollCursor = state.cursor(); String pollEpoch = state.serverEpoch();
             TransportResponse response = transport.poll(token, pollCursor);
             if (!owner.owns(lease)) return result(Status.STOPPED, null);
@@ -68,10 +70,11 @@ public final class BridgeEngine {
                 });
             }
             for (RelayProtocol.Entry entry : fetch.entries()) {
+                if (!owner.owns(lease)) return result(Status.STOPPED, null);
                 state = store.load(); ProtocolEvent event = entry.event(); BridgeState.Delivery delivery = state.classify(event);
                 if (delivery == BridgeState.Delivery.STALE || delivery == BridgeState.Delivery.CONFLICT) return result(Status.PROTOCOL_FAILURE, delivery.name());
                 if (delivery == BridgeState.Delivery.NEW) {
-                    if (!applier.apply(event)) return result(Status.PERMISSION_REQUIRED, "ApplyUnavailable");
+                    if (!applier.apply(event)) return result(owner.owns(lease) ? Status.PERMISSION_REQUIRED : Status.STOPPED, "ApplyUnavailable");
                     state = store.update(new BridgeStateStore.Mutation() {
                         @Override public BridgeState apply(BridgeState current) { return current.applied(event, entry.cursor()); }
                     });
@@ -89,6 +92,7 @@ public final class BridgeEngine {
             Result finalAck = flushAcks(token, state, lease); return finalAck == null ? result(Status.CONNECTED, null) : finalAck;
         } catch (SecureStoreException error) { return result(Status.SECURITY_FAILURE, error.getClass().getSimpleName());
         } catch (CorruptStateException error) { return result(Status.SECURITY_FAILURE, error.getClass().getSimpleName());
+        } catch (PollWakeException error) { return result(owner.owns(lease) ? Status.OUTBOX_READY : Status.STOPPED, null);
         } catch (CancelledTransportException error) { return result(Status.STOPPED, error.getClass().getSimpleName());
         } catch (SSLException error) { return result(Status.TLS_FAILURE, error.getClass().getSimpleName());
         } catch (IllegalArgumentException error) { return result(Status.PROTOCOL_FAILURE, error.getClass().getSimpleName());
@@ -99,6 +103,7 @@ public final class BridgeEngine {
     public void cancel(ConnectionOwner.Lease lease) { owner.cancel(lease); transport.cancel(); }
 
     private Result flushAcks(String token, BridgeState state, ConnectionOwner.Lease lease) throws Exception {
+        if (!owner.owns(lease)) return result(Status.STOPPED, null);
         if (state.pendingAcks().isEmpty()) return null;
         List<String> ids = new ArrayList<>(state.pendingAcks());
         TransportResponse response = transport.acknowledge(token, state.deviceId(), ids);
