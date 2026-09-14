@@ -1,0 +1,33 @@
+[Unit]
+Description=Continuity Bridge HTTPS relay
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=continuity-bridge
+Group=continuity-bridge
+WorkingDirectory=/opt/continuity-bridge
+EnvironmentFile=/etc/continuity-bridge/relay.env
+Environment=RELAY_PORT=8443
+Environment=RELAY_STATE_PATH=/var/lib/continuity-bridge/state.json
+Environment=RELAY_AUTH_PATH=/etc/continuity-bridge/auth.json
+Environment=RELAY_TLS_CERT_PATH=/etc/continuity-bridge/server.pem
+Environment=RELAY_TLS_KEY_PATH=/etc/continuity-bridge/server-key.pem
+ExecStart=/usr/bin/node /opt/continuity-bridge/relay/src/main.mjs
+Restart=on-failure
+RestartSec=3
+TimeoutStopSec=35
+StateDirectory=continuity-bridge
+StateDirectoryMode=0700
+UMask=0077
+NoNewPrivileges=true
+CapabilityBoundingSet=
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+MemoryMax=512M
+TasksMax=64
+
+[Install]
+WantedBy=multi-user.target
