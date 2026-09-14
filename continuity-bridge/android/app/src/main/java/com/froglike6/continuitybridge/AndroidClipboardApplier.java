@@ -4,6 +4,7 @@ import android.content.ClipData;
 import android.content.ClipDescription;
 import android.content.ClipboardManager;
 import android.content.Context;
+import android.app.KeyguardManager;
 import android.os.PersistableBundle;
 
 final class AndroidClipboardApplier implements EventApplier {
@@ -22,7 +23,12 @@ final class AndroidClipboardApplier implements EventApplier {
     }
 
     @Override public boolean apply(ProtocolEvent event) {
+        if (context.getSystemService(KeyguardManager.class).isDeviceLocked()) {
+            new ConfigStore(context).clipboardCapability("잠금 해제 후 복사를 이어갑니다");
+            return false;
+        }
         boolean success = transaction.apply(event);
+        if (success) new ConfigStore(context).clipboardCapability("복사 공유 준비됨");
         if (!success) RemoteApplyTracker.clear(event.eventId()); return success;
     }
 
