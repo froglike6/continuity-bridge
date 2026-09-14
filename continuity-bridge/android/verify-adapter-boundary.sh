@@ -4,9 +4,9 @@ MODE=${1:?mode required}
 SOURCE=${2:?source root required}
 CLASSES=${3:?classes root required}
 APK=${4:?apk required}
-JAVAP="/Applications/Android Studio.app/Contents/jbr/Contents/Home/bin/javap"
-AAPT2=/opt/homebrew/share/android-commandlinetools/build-tools/35.0.0/aapt2
-APK_ANALYZER=/opt/homebrew/bin/apkanalyzer
+ANDROID_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+. "$ANDROID_DIR/toolchain.sh"
+continuity_android_tools
 
 fail() { echo "ADAPTER_BOUNDARY_FAIL=$1" >&2; exit 1; }
 contains_tree() { grep -R -I -F -q -- "$1" "$2" 2>/dev/null; }
@@ -81,7 +81,7 @@ fixture)
     find "$CLASSES" -type f | grep -Fq '/com/froglike6/continuitybridge/' && fail production_class_in_fixture_classes
     defined_classes "$APK" | grep -Fq 'com.froglike6.continuitybridge' && fail production_class_in_fixture_dex
     defined_classes "$APK" | grep -Ev '^com\.froglike6\.continuityfixture(\.|$)' | grep -q . && fail foreign_class_in_fixture_dex
-    BADGING=$($AAPT2 dump badging "$APK")
+    BADGING=$("$AAPT2" dump badging "$APK")
     printf '%s\n' "$BADGING" | grep -Fq "package: name='com.froglike6.continuityfixture'" || fail fixture_package_missing
     printf '%s\n' "$BADGING" | grep -Fq "launchable-activity: name='com.froglike6.continuityfixture.FixtureActivity'" || fail fixture_launcher_missing
     echo 'ADAPTER_BOUNDARY_OK mode=fixture separation=exact-source-inventory+classes+dex package+launcher=verified'

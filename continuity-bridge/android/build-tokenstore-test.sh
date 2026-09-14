@@ -4,16 +4,19 @@ if test "${CONTINUITY_TOKEN_TEST_BOUNDED:-0}" != 1; then
     exec env CONTINUITY_TOKEN_TEST_BOUNDED=1 /usr/bin/perl -e 'alarm 45; exec @ARGV or die "exec failed: $!\n"' "$0" "$@"
 fi
 ANDROID_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
-PLATFORM_JAR=/opt/homebrew/share/android-commandlinetools/platforms/android-35/android.jar
-TEST_RUNNER_JAR=/opt/homebrew/share/android-commandlinetools/platforms/android-35/optional/android.test.runner.jar
-TEST_BASE_JAR=/opt/homebrew/share/android-commandlinetools/platforms/android-35/optional/android.test.base.jar
-TOOLS=/opt/homebrew/share/android-commandlinetools/build-tools/35.0.0
-JAVA_HOME="/Applications/Android Studio.app/Contents/jbr/Contents/Home"
-KEYSTORE=$HOME/.android/debug.keystore
+. "$ANDROID_DIR/toolchain.sh"
+continuity_android_tools
+continuity_debug_keystore
+TEST_RUNNER_JAR="$PLATFORM_DIR/optional/android.test.runner.jar"
+TEST_BASE_JAR="$PLATFORM_DIR/optional/android.test.base.jar"
+TOOLS="$TOOLS_DIR"
+for path in "$TEST_RUNNER_JAR" "$TEST_BASE_JAR"; do
+    test -f "$path" || continuity_tool_error "Missing Android test library: $path"
+done
 BUILD="$ANDROID_DIR/build/tokenstore-test"
 TEST="$ANDROID_DIR/instrumentation-test"
 PRODUCTION_BUILD="$ANDROID_DIR/build/shizuku"
-test -d "$PRODUCTION_BUILD/classes" || { echo 'Build Shizuku production classes first' >&2; exit 1; }
+test -d "$PRODUCTION_BUILD/classes" || { echo 'Run android/build.sh to build production classes first' >&2; exit 1; }
 DEPENDENCY_CP=$(find "$PRODUCTION_BUILD/dependencies/jars" -name '*.jar' -print | LC_ALL=C sort | paste -sd ':' -)
 find "$BUILD" -type f -delete 2>/dev/null || true
 find "$BUILD" -depth -type d -empty -delete 2>/dev/null || true

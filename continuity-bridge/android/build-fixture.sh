@@ -5,10 +5,10 @@ if test "${CONTINUITY_FIXTURE_BOUNDED:-0}" != 1; then
 fi
 ANDROID_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 ROOT=$(CDPATH= cd -- "$ANDROID_DIR/../.." && pwd)
-PLATFORM_JAR=/opt/homebrew/share/android-commandlinetools/platforms/android-35/android.jar
-TOOLS=/opt/homebrew/share/android-commandlinetools/build-tools/35.0.0
-JAVA_HOME="/Applications/Android Studio.app/Contents/jbr/Contents/Home"
-KEYSTORE=$HOME/.android/debug.keystore
+. "$ANDROID_DIR/toolchain.sh"
+continuity_android_tools
+continuity_debug_keystore
+TOOLS="$TOOLS_DIR"
 BUILD="$ANDROID_DIR/build/fixture"
 SOURCE="$ANDROID_DIR/fixture/src/main/java"
 RESOURCES="$ANDROID_DIR/fixture/src/main/res"

@@ -2,7 +2,8 @@
 set -eu
 ANDROID_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 ROOT=$(CDPATH= cd -- "$ANDROID_DIR/../.." && pwd)
-JAVA_HOME="/Applications/Android Studio.app/Contents/jbr/Contents/Home"
+. "$ANDROID_DIR/toolchain.sh"
+continuity_java
 TASK_TEMP=$(mktemp -d /tmp/continuity-task3-bounds.XXXXXX)
 cleanup() { find "$TASK_TEMP" -type f -delete; find "$TASK_TEMP" -depth -type d -empty -delete; }
 trap cleanup EXIT INT TERM

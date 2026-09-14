@@ -3,8 +3,9 @@ set -eu
 
 FIXTURE_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 BUILD="$FIXTURE_DIR/../build/fixture-host-test"
-JAVA_HOME="/Applications/Android Studio.app/Contents/jbr/Contents/Home"
-PLATFORM_JAR=/opt/homebrew/share/android-commandlinetools/platforms/android-35/android.jar
+. "$FIXTURE_DIR/../toolchain.sh"
+continuity_java
+continuity_android_sdk
 SOURCE="$FIXTURE_DIR/src/main/java/com/froglike6/continuityfixture/FixtureActivity.java"
 TEST="$FIXTURE_DIR/host-test/com/froglike6/continuityfixture/PipelineObservationTest.java"
 

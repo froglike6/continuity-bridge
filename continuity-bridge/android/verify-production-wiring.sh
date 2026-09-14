@@ -1,7 +1,9 @@
 #!/bin/sh
 set -eu
 CLASSES=${1:-continuity-bridge/android/build/shizuku/classes}
-JAVAP="/Applications/Android Studio.app/Contents/jbr/Contents/Home/bin/javap"
+ANDROID_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+. "$ANDROID_DIR/toolchain.sh"
+continuity_java
 SERVICE=com.froglike6.continuitybridge.BridgeService
 DUMP=$("$JAVAP" -classpath "$CLASSES" -c -p "$SERVICE")
 for required in 'BridgeEngine.step' 'BridgeEngine.cancel' 'BridgeRepository.get' 'AndroidClipboardApplier."<init>"' 'ClipboardCaptureController.start' 'ConnectionOwner.start' 'RelayTransport."<init>"'; do

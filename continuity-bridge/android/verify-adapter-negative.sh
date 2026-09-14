@@ -11,8 +11,8 @@ PUBLIC_CA_MAX_BYTES=4096
 
 ANDROID_DIR=$(CDPATH= cd -P -- "$(dirname -- "$0")" && pwd -P)
 ROOT=$(CDPATH= cd -P -- "$ANDROID_DIR/../.." && pwd -P)
-TLS_DIR="$ROOT/continuity-bridge/runtime/tls"
-CA_SOURCE="$TLS_DIR/ca.pem"
+TLS_DIR="$ANDROID_DIR/app/src/main/res/raw"
+CA_SOURCE="$TLS_DIR/continuity_local_ca.pem"
 test -d "$TLS_DIR" || fail_public_ca directory_missing
 TLS_DIR_PHYSICAL=$(CDPATH= cd -P -- "$TLS_DIR" && pwd -P) || fail_public_ca directory_unreadable
 test "$TLS_DIR_PHYSICAL" = "$TLS_DIR" || fail_public_ca directory_symlink_escape

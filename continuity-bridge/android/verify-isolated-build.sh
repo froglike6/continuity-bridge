@@ -4,9 +4,8 @@ ANDROID_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 ROOT=$(CDPATH= cd -- "$ANDROID_DIR/../.." && pwd)
 TEMP=$(mktemp -d "${TMPDIR:-/tmp}/continuity-task4-isolated.XXXXXX")
 trap 'rm -rf "$TEMP"' EXIT INT TERM
-mkdir -p "$TEMP/continuity-bridge/runtime/tls"
+mkdir -p "$TEMP/continuity-bridge"
 cp -R "$ANDROID_DIR" "$TEMP/continuity-bridge/android"
-cp "$ROOT/continuity-bridge/runtime/tls/ca.pem" "$TEMP/continuity-bridge/runtime/tls/ca.pem"
 ISOLATED="$TEMP/continuity-bridge/android"
 "$ISOLATED/build.sh"
 "$ISOLATED/build-fixture.sh"

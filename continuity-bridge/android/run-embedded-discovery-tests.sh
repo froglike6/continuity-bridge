@@ -1,7 +1,9 @@
 #!/bin/sh
 set -eu
 ANDROID_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
-JAVA_RUNTIME="${JAVA_HOME:-/Applications/Android Studio.app/Contents/jbr/Contents/Home}"
+. "$ANDROID_DIR/toolchain.sh"
+continuity_java
+JAVA_RUNTIME="$JAVA_HOME"
 DISCOVERY_SOURCE="${1:-$ANDROID_DIR/app/src/main/java/com/froglike6/continuitybridge/LocalAdbDiscovery.java}"
 TEST_BUILD=$(mktemp -d "${TMPDIR:-/tmp}/continuity-helper-discovery.XXXXXX")
 trap 'rm -rf "$TEST_BUILD"' EXIT INT TERM

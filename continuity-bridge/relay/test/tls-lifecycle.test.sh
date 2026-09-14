@@ -81,9 +81,11 @@ case_android_coherence() {
     trap 'rm -rf "$work"' EXIT HUP INT TERM
     mkdir -p "$work/continuity-bridge" "$work/outputs"
     cp -R "$ROOT/android" "$work/continuity-bridge/android"
-    mkdir -p "$work/continuity-bridge/runtime/tls"
-    cp "$ROOT/runtime/tls/ca.pem" "$work/continuity-bridge/runtime/tls/ca.pem"
+    "$GENERATOR" "$work/continuity-bridge/runtime/tls" >/dev/null
+    cp "$work/continuity-bridge/runtime/tls/ca.pem" \
+        "$work/continuity-bridge/android/app/src/main/res/raw/continuity_local_ca.pem"
     set +e
+    CONTINUITY_ANDROID_CA_PEM="$work/continuity-bridge/runtime/tls/ca.pem" \
     "$work/continuity-bridge/android/build.sh" >"$work/build.out" 2>"$work/build.err"
     build_status=$?
     set -e
@@ -96,12 +98,25 @@ case_android_coherence() {
     cmp -s "$work/continuity-bridge/runtime/tls/ca.pem" "$work/apk/res/raw/continuity_local_ca.pem" || fail android_packaged_divergent_ca
     "$GENERATOR" "$work/mismatch-tls" >/dev/null
     cp "$work/mismatch-tls/ca.pem" "$work/continuity-bridge/runtime/tls/ca.pem"
+    cmp -s "$work/continuity-bridge/runtime/tls/ca.pem" "$work/apk/res/raw/continuity_local_ca.pem" && fail android_mismatch_ca_unchanged
     set +e
+    CONTINUITY_ANDROID_CA_PEM="$work/continuity-bridge/runtime/tls/ca.pem" \
     "$work/continuity-bridge/android/build.sh" >"$work/mismatch-build.out" 2>"$work/mismatch-build.err"
     mismatch_status=$?
     set -e
     test "$mismatch_status" -ne 0 || fail android_mismatch_build_succeeded
-    printf 'TLS_LIFECYCLE_ANDROID_COHERENCE_OK build_status=%s mismatch_status=%s apk_ca_exact=1\n' "$build_status" "$mismatch_status"
+    grep -Fq 'Android CA resource differs from CONTINUITY_ANDROID_CA_PEM' "$work/mismatch-build.err" || fail android_mismatch_wrong_failure
+    grep -Fq 'ANDROID_BUILD_OK' "$work/mismatch-build.out" && fail android_mismatch_false_green
+    set +e
+    (unset CONTINUITY_ANDROID_CA_PEM; "$work/continuity-bridge/android/build.sh") \
+        >"$work/implicit-build.out" 2>"$work/implicit-build.err"
+    implicit_status=$?
+    set -e
+    test "$implicit_status" -ne 0 || fail android_implicit_ca_replacement_succeeded
+    grep -Fq 'Android public test CA changed;' "$work/implicit-build.err" || fail android_implicit_ca_wrong_failure
+    grep -Fq 'ANDROID_BUILD_OK' "$work/implicit-build.out" && fail android_implicit_ca_false_green
+    printf 'TLS_LIFECYCLE_ANDROID_COHERENCE_OK build_status=%s mismatch_status=%s implicit_status=%s apk_ca_exact=1\n' \
+        "$build_status" "$mismatch_status" "$implicit_status"
     rm -rf "$work"
     trap - EXIT HUP INT TERM
 }

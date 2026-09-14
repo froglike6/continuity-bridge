@@ -5,20 +5,31 @@ if test "${CONTINUITY_BUILD_BOUNDED:-0}" != 1; then
 fi
 ANDROID_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 ROOT=$(CDPATH= cd -- "$ANDROID_DIR/../.." && pwd)
-PLATFORM_JAR=/opt/homebrew/share/android-commandlinetools/platforms/android-35/android.jar
-TOOLS_DIR=/opt/homebrew/share/android-commandlinetools/build-tools/35.0.0
-JAVA_HOME="/Applications/Android Studio.app/Contents/jbr/Contents/Home"
-KEYSTORE=$HOME/.android/debug.keystore
+. "$ANDROID_DIR/toolchain.sh"
+continuity_android_tools
+continuity_debug_keystore
 BUILD="$ANDROID_DIR/build/shizuku"
 SOURCE="$ANDROID_DIR/app/src/main/java"
 RESOURCES="$ANDROID_DIR/app/src/main/res"
-CANONICAL_CA="$ROOT/continuity-bridge/runtime/tls/ca.pem"
+CANONICAL_CA="${CONTINUITY_ANDROID_CA_PEM:-$RESOURCES/raw/continuity_local_ca.pem}"
 MANIFEST="$ANDROID_DIR/app/src/main/AndroidManifest.xml"
 for path in "$PLATFORM_JAR" "$TOOLS_DIR/aapt2" "$TOOLS_DIR/aidl" "$TOOLS_DIR/d8" "$TOOLS_DIR/zipalign" "$TOOLS_DIR/apksigner" "$JAVA_HOME/bin/javac" "$KEYSTORE" "$MANIFEST" "$CANONICAL_CA"; do
     test -e "$path" || { echo "Missing local tool: $path" >&2; exit 1; }
 done
+if test -z "${CONTINUITY_ANDROID_CA_PEM:-}"; then
+    CA_SHA256=$(shasum -a 256 "$CANONICAL_CA" | awk '{print $1}')
+    test "$CA_SHA256" = c6cfdabcf2ca0774883c80e23277360fb44e7430ddec3f99bb1925e9975ca86b || {
+        echo 'Android public test CA changed; set CONTINUITY_ANDROID_CA_PEM to your matching local CA explicitly.' >&2
+        exit 1
+    }
+elif ! openssl x509 -in "$CANONICAL_CA" -outform PEM 2>/dev/null | cmp -s - "$CANONICAL_CA" || \
+    ! openssl x509 -in "$CANONICAL_CA" -noout -text 2>/dev/null | grep -Fq 'CA:TRUE' || \
+    ! openssl verify -CAfile "$CANONICAL_CA" "$CANONICAL_CA" >/dev/null 2>&1; then
+    echo 'CONTINUITY_ANDROID_CA_PEM must contain only a currently valid public PEM CA certificate.' >&2
+    exit 1
+fi
 cmp -s "$CANONICAL_CA" "$RESOURCES/raw/continuity_local_ca.pem" || {
-    echo "Android CA resource differs from canonical runtime CA" >&2
+    echo "Android CA resource differs from CONTINUITY_ANDROID_CA_PEM" >&2
     exit 1
 }
 rm -rf "$BUILD"

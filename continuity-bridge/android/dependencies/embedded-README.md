@@ -74,10 +74,45 @@ parameter data. Original JAR manifests and cryptographic signature metadata
 are excluded from the APK resource tree. No external Shizuku SDK/provider or
 runtime JAR is passed to this build.
 
-The checked-in build script has hardcoded macOS Android SDK/JBR/keystore
-paths. The source handoff kit documents the variables and verification-script
-paths that a recipient must edit in their own copy. The kit is not a claim
-of an unchanged portable build or of byte-for-byte reproducible APK signing.
+Build and verification scripts share `../toolchain.sh`. Install Android SDK
+Platform 35, Build-Tools 35.0.0 and Command-line Tools (latest), then run from
+the repository root:
+
+```sh
+export ANDROID_HOME="$HOME/Library/Android/sdk"
+export JAVA_HOME="/Applications/Android Studio.app/Contents/jbr/Contents/Home"
+./continuity-bridge/android/build.sh
+```
+
+`ANDROID_HOME` takes precedence over `ANDROID_SDK_ROOT`. With neither set,
+the scripts try the standard Android Studio and Homebrew SDK locations.
+`JAVA_HOME` is respected; otherwise Android Studio's JBR and then macOS
+`java_home` are tried. Use a JDK 17 or newer. All verification scripts use
+the same selected SDK/JDK, including `apkanalyzer` from
+`$ANDROID_HOME/cmdline-tools/latest/bin`.
+
+For unpacked `tools35` / `platform35` directories, set
+`CONTINUITY_ANDROID_BUILD_TOOLS` to the directory containing `aapt2`, `aidl`,
+`d8`, `zipalign`, `apksigner`, and `core-lambda-stubs.jar`, and
+`CONTINUITY_ANDROID_PLATFORM_DIR` to the directory containing `android.jar`
+and `framework.aidl`. `CONTINUITY_APKANALYZER` overrides the executable path.
+An SDK root is still required. Paths should be absolute.
+
+The debug signing key is selected by `CONTINUITY_DEBUG_KEYSTORE`, then
+`KEYSTORE`, then `$HOME/.android/debug.keystore`. A missing key is generated
+locally with alias `androiddebugkey` and password `android`. Use this only
+for development. Signing keys are not distributed, and APK bytes and signing
+identity will differ across builders. Android cannot update an installed
+APK signed by someone else's key; use the same local key for later rebuilds.
+
+The checked-in public test CA is hash-checked during the build and is used
+only when local pinned TLS is selected in the app. Public HTTPS with an
+empty pin uses system trust. No `runtime/` directory is required to build.
+For your own local CA, replace `app/src/main/res/raw/continuity_local_ca.pem`
+and set `CONTINUITY_ANDROID_CA_PEM` to the matching public CA file; the build
+requires an exact match. Never put its private key in the resource tree.
+`verify-adapter-negative.sh` intentionally requires the original hash-checked
+public test CA, so run that suite on an unchanged certificate fixture.
 
 ## Native compatibility evidence
 

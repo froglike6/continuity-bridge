@@ -5,8 +5,9 @@ if test "${CONTINUITY_HOST_BOUNDED:-0}" != 1; then
 fi
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
 ANDROID_DIR="$ROOT/continuity-bridge/android"
-JAVA_HOME="/Applications/Android Studio.app/Contents/jbr/Contents/Home"
-PLATFORM_JAR=/opt/homebrew/share/android-commandlinetools/platforms/android-35/android.jar
+. "$ANDROID_DIR/toolchain.sh"
+continuity_java
+continuity_android_sdk
 BUILD="$ANDROID_DIR/build/host"
 rm -rf "$BUILD"
 mkdir -p "$BUILD/classes"

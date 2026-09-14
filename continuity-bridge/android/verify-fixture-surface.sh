@@ -8,15 +8,17 @@ else
     SOURCE=${2:-continuity-bridge/android/fixture/src/main/java/com/froglike6/continuityfixture/FixtureActivity.java}
     CLASSES=${3:-continuity-bridge/android/build/fixture/classes}
 fi
-AAPT2=/opt/homebrew/share/android-commandlinetools/build-tools/35.0.0/aapt2
-JAVAP="/Applications/Android Studio.app/Contents/jbr/Contents/Home/bin/javap"
+ANDROID_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+. "$ANDROID_DIR/toolchain.sh"
+continuity_java
+if test "$STATIC_ONLY" = 0; then continuity_android_tools; fi
 fail() { echo "FIXTURE_SURFACE_FAIL=$1" >&2; exit 1; }
 
 test -s "$SOURCE" || fail activity_source_missing
 test -d "$CLASSES" || fail classes_missing
 if test "$STATIC_ONLY" = 0; then
     test -s "$APK" || fail apk_missing
-    BADGING=$($AAPT2 dump badging "$APK")
+    BADGING=$("$AAPT2" dump badging "$APK")
     printf '%s\n' "$BADGING" | grep -Fq "package: name='com.froglike6.continuityfixture'" || fail package_missing
     printf '%s\n' "$BADGING" | grep -Fq "launchable-activity: name='com.froglike6.continuityfixture.FixtureActivity'" || fail launcher_missing
 fi
