@@ -30,9 +30,17 @@ public enum NotificationApplyError: Error, Equatable {
 }
 
 public struct AndroidNotificationRenderer: Sendable {
-    private let center: NotificationCenterClient
+    private enum Destination: Sendable {
+        case native(any NotificationCenterClient)
+        case custom(@Sendable (BridgeEvent) async throws -> Void)
+    }
+    private let destination: Destination
 
-    public init(center: NotificationCenterClient) { self.center = center }
+    public init(center: NotificationCenterClient) { destination = .native(center) }
+
+    public init(deliver: @escaping @Sendable (BridgeEvent) async throws -> Void) {
+        destination = .custom(deliver)
+    }
 
     public static func requestIdentifier(deviceId: String, notificationKey: String) -> String {
         let data = Data("\(deviceId)\0\(notificationKey)".utf8)
@@ -45,6 +53,16 @@ public struct AndroidNotificationRenderer: Sendable {
         }
         do { try event.validate() }
         catch { throw NotificationApplyError.invalidEvent }
+        switch destination {
+        case .custom(let deliver):
+            try await deliver(event)
+        case .native(let center):
+            try await deliverNative(event, payload: payload, center: center)
+        }
+    }
+
+    private func deliverNative(_ event: BridgeEvent, payload: NotificationPayload,
+                               center: any NotificationCenterClient) async throws {
         switch await center.authorizationStatus() {
         case .authorized, .provisional, .ephemeral:
             break
