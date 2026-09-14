@@ -119,6 +119,10 @@ public final class MainActivity extends Activity {
         divider(readinessGroup);
         deliveryReadiness = readiness(readinessGroup, "Android 알림 전달");
         caption(readinessGroup, "상시·무음·시스템 상태 알림은 제외합니다.\n다운로드 같은 작업 진행률은 전달합니다.");
+        Button apps = permissionButton(readinessGroup, "알림을 보낼 앱 선택");
+        apps.setOnClickListener(new View.OnClickListener() { @Override public void onClick(View view) {
+            startActivity(new Intent(MainActivity.this, NotificationAppsActivity.class));
+        }});
 
         section(content, "권한");
         LinearLayout permissionsGroup = surface(content);

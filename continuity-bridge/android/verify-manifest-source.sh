@@ -18,11 +18,12 @@ EXPECTED_PERMISSIONS = (
     "android.permission.FOREGROUND_SERVICE_REMOTE_MESSAGING",
     "android.permission.INTERNET",
     "android.permission.POST_NOTIFICATIONS",
+    "android.permission.QUERY_ALL_PACKAGES",
     "android.permission.ACCESS_NETWORK_STATE",
     "android.permission.RECEIVE_BOOT_COMPLETED",
     "android.permission.WRITE_SECURE_SETTINGS",
 )
-EXPECTED_ACTIVITIES = (".MainActivity", ".HelperSetupActivity")
+EXPECTED_ACTIVITIES = (".MainActivity", ".NotificationAppsActivity", ".HelperSetupActivity")
 EXPECTED_SERVICES = (".BridgeService", ".NotificationMirrorService")
 NLS_PERMISSION = "android.permission.BIND_NOTIFICATION_LISTENER_SERVICE"
 NLS_ACTION = "android.service.notification.NotificationListenerService"
@@ -227,7 +228,7 @@ if android_attr(mirror_service, "permission") != NLS_PERMISSION:
 
 for activity in direct_children(application, "activity"):
     activity_name = android_attr(activity, "name")
-    if activity_name == ".HelperSetupActivity":
+    if activity_name in (".NotificationAppsActivity", ".HelperSetupActivity"):
         require_no_children(activity, "MANIFEST_NOTIFICATION_APPS_CHILD_UNEXPECTED")
         if android_attr(activity, "exported") != "false":
             fail("MANIFEST_NOTIFICATION_APPS_EXPORTED")
@@ -276,5 +277,5 @@ for action in root.iter():
     ):
         fail("MANIFEST_NOTIFICATION_LISTENER_ACTION_WRONG_NODE")
 
-print("MANIFEST_SOURCE_OK permissions=7 activities=2 services=2 image_provider=1 helper_provider=1 boot_receiver=1 overlay=0 notification_listener=1")
+print("MANIFEST_SOURCE_OK permissions=8 activities=3 services=2 image_provider=1 helper_provider=1 boot_receiver=1 overlay=0 notification_listener=1")
 PY
