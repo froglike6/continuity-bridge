@@ -13,6 +13,7 @@ mkdir -p "$BUILD/classes"
 find "$ANDROID_DIR/app/src/main/java/com/froglike6/continuitybridge/core" "$ANDROID_DIR/host-test" -name '*.java' -print > "$BUILD/sources.txt"
 printf '%s\n' "$ANDROID_DIR/app/src/main/java/com/froglike6/continuitybridge/ConnectionStatus.java" "$ANDROID_DIR/app/src/main/java/com/froglike6/continuitybridge/UiStatePolicy.java" "$ANDROID_DIR/app/src/main/java/com/froglike6/continuitybridge/ConfigStore.java" "$ANDROID_DIR/app/src/main/java/com/froglike6/continuitybridge/MetadataLog.java" "$ANDROID_DIR/app/src/main/java/com/froglike6/continuitybridge/RelayTransport.java" >> "$BUILD/sources.txt"
 LC_ALL=C sort -u "$BUILD/sources.txt" -o "$BUILD/sources.txt"
+printf '%s\n' "$ANDROID_DIR/app/src/main/java/com/froglike6/continuitybridge/TokenStore.java" >> "$BUILD/sources.txt"
 "$JAVA_HOME/bin/javac" -Xlint:all -Werror -encoding UTF-8 -classpath "$PLATFORM_JAR" -d "$BUILD/classes" @"$BUILD/sources.txt"
 "$JAVA_HOME/bin/java" -ea -cp "$BUILD/classes" com.froglike6.continuitybridge.HostSuite "$ROOT/continuity-bridge/protocol/fixtures" "$ROOT/continuity-bridge/runtime/tls"
 "$JAVA_HOME/bin/java" -ea -cp "$BUILD/classes" com.froglike6.continuitybridge.AdapterHostSuite

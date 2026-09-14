@@ -13,6 +13,7 @@ final class ConfigStore {
     String endpoint() { return values.getString("endpoint", "https://10.0.2.2:8443"); }
     String pin() { return values.getString("leaf_pin", ""); }
     boolean systemTrust() { return values.getBoolean("system_trust", false); }
+    boolean accessEnabled() { return values.getBoolean("cloudflare_access_enabled", false); }
     String deviceId() { return stable("device_id", "android-"); }
     String epoch() { return stable("origin_epoch", "epoch-"); }
     ConnectionStatus status() {
@@ -36,10 +37,16 @@ final class ConfigStore {
     String notificationDeliveryStatus() { return values.getString("notification_delivery", "대기 중"); }
 
     void save(String endpoint, String pin, boolean systemTrust) {
+        save(endpoint, pin, systemTrust, accessEnabled());
+    }
+
+    void save(String endpoint, String pin, boolean systemTrust, boolean accessEnabled) {
         ConfigValidator.httpsUrl(endpoint);
         String storedPin = systemTrust ? "" : ConfigValidator.pin(pin);
-        values.edit().putString("endpoint", endpoint).putString("leaf_pin", storedPin)
-                .putBoolean("system_trust", systemTrust).apply();
+        if (!values.edit().putString("endpoint", endpoint).putString("leaf_pin", storedPin)
+                .putBoolean("system_trust", systemTrust).putBoolean("cloudflare_access_enabled", accessEnabled).commit()) {
+            throw new IllegalStateException("configuration_persistence_failed");
+        }
     }
 
     private String stable(String key, String prefix) {

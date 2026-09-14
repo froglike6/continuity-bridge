@@ -24,6 +24,7 @@ public final class HostSuite {
         Path fixtures = Paths.get(args[0]); Path tls = Paths.get(args[1]);
         protocol(fixtures); configuration(); state(fixtures); epochMetadataCharacterization(); boundedEpochMetadata(); boundedState(); persistence(fixtures); retry(); crypto(); connection(); tls(tls); cases += UiStatePolicySuite.run(); cases += ProductionEngineSuite.run(fixtures); cases += RelayTransportDiagnosticSuite.run(); cases += TransportDiagnosticSuite.run();
         cases += OutboxWakeupSuite.run();
+        cases += AccessCredentialSuite.run();
         System.out.println("HOST_SUITE_OK cases=" + cases + " markers="
                 + "valid_fixture,valid_notification,valid_macos,unknown_fields,unknown_version,unknown_kind,unknown_role,role_rules,malformed_fixture,prompt_payload_opaque,invalid_url,malformed_pin,uppercase_pin,wrong_length_pin,pin_boundaries,"
                 + "same_retry,outbound_identity,monotonic_factory,ack_selective,duplicate,stale,conflict,sequence_restart,outbox_bound,notification_bounds,notification_expired_first,notification_oldest_live,notification_utf8_bytes,applied_bound,fingerprint_bound,fingerprint_live,restart_bounded,replay_idempotent,remote_apply,"
