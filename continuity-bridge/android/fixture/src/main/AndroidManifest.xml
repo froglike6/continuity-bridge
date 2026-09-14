@@ -8,5 +8,8 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+        <activity android:name=".ClipboardImageFixtureActivity" android:exported="true" />
+        <provider android:name=".ClipboardImageFixtureProvider" android:authorities="com.froglike6.continuityfixture.images"
+            android:exported="false" android:grantUriPermissions="true" />
     </application>
 </manifest>

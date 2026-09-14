@@ -115,7 +115,7 @@ applications = direct_children(root, "application")
 if len(applications) != 1:
     fail("MANIFEST_APPLICATION_COUNT_MISMATCH")
 application = applications[0]
-require_children(application, {"activity", "service"}, "MANIFEST_APPLICATION_CHILD_UNEXPECTED")
+require_children(application, {"activity", "service", "provider"}, "MANIFEST_APPLICATION_CHILD_UNEXPECTED")
 
 for attribute, expected, marker in (
     ("allowBackup", "false", "MANIFEST_APPLICATION_ALLOW_BACKUP"),
@@ -130,13 +130,31 @@ for attribute, expected, marker in (
 for element in root.iter():
     if element.tag == "receiver":
         fail("MANIFEST_FORBIDDEN_RECEIVER")
-    if element.tag == "provider":
-        fail("MANIFEST_FORBIDDEN_PROVIDER")
     class_name = android_attr(element, "name") or ""
     if "AccessibilityService" in class_name:
         fail("MANIFEST_FORBIDDEN_ACCESSIBILITY_SERVICE")
     if "InputMethodService" in class_name:
         fail("MANIFEST_FORBIDDEN_INPUT_METHOD_SERVICE")
+
+providers = direct_children(application, "provider")
+if len(providers) != 1:
+    fail("MANIFEST_PROVIDER_COUNT_MISMATCH")
+expected_providers = {
+    ".ClipboardImageProvider": {
+        "name": ".ClipboardImageProvider",
+        "authorities": "com.froglike6.continuitybridge.clipboard.images",
+        "exported": "false",
+        "grantUriPermissions": "true",
+    },
+}
+if Counter(android_attr(provider, "name") for provider in providers) != Counter(expected_providers.keys()):
+    fail("MANIFEST_PROVIDER_NAMES_MISMATCH")
+for provider in providers:
+    provider_name = android_attr(provider, "name")
+    expected_attributes = {f"{{{ANDROID_NS}}}{key}": value for key, value in expected_providers[provider_name].items()}
+    if provider.attrib != expected_attributes:
+        fail(f"MANIFEST_PROVIDER_ATTRIBUTES_MISMATCH={provider_name}")
+    require_no_children(provider, "MANIFEST_PROVIDER_CHILD_UNEXPECTED")
 
 permissions = [android_attr(child, "name") for child in direct_children(root, "uses-permission")]
 exact_values(
@@ -234,5 +252,5 @@ for action in root.iter():
     ):
         fail("MANIFEST_NOTIFICATION_LISTENER_ACTION_WRONG_NODE")
 
-print("MANIFEST_SOURCE_OK permissions=6 activities=2 services=2 overlay=1 notification_listener=1")
+print("MANIFEST_SOURCE_OK permissions=6 activities=2 services=2 image_provider=1 overlay=1 notification_listener=1")
 PY

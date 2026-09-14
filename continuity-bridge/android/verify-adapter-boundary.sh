@@ -60,6 +60,8 @@ fixture)
         main/java/com \
         main/java/com/froglike6 \
         main/java/com/froglike6/continuityfixture \
+        main/java/com/froglike6/continuityfixture/ClipboardImageFixtureActivity.java \
+        main/java/com/froglike6/continuityfixture/ClipboardImageFixtureProvider.java \
         main/java/com/froglike6/continuityfixture/FixtureActivity.java)
     ACTUAL_FIXTURE_TREE=$(find "$SOURCE/main" -print | sed "s#^$SOURCE/##" | LC_ALL=C sort)
     test "$ACTUAL_FIXTURE_TREE" = "$EXPECTED_FIXTURE_TREE" || fail fixture_source_inventory_unowned
