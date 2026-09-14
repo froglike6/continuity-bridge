@@ -74,13 +74,17 @@ rg -q 'let applier = RemoteEventApplier' "$MACOS_DIR/Sources/ContinuityMenuBar/B
 rg -q 'apply: \{ event in try await applier\.apply\(event\) \}' \
     "$MACOS_DIR/Sources/ContinuityMenuBar/BridgeHostModel.swift"
 
-swift build --package-path "$MACOS_DIR" -c release
+swift build --package-path "$MACOS_DIR" -c release \
+    -Xswiftc -debug-prefix-map -Xswiftc "$WORKSPACE_DIR=/src" \
+    -Xcc "-fdebug-prefix-map=$WORKSPACE_DIR=/src"
 BIN_DIR=$(swift build --package-path "$MACOS_DIR" -c release --show-bin-path)
 
 rm -rf "$APP_DIR"
 mkdir -p "$CONTENTS_DIR/MacOS" "$CONTENTS_DIR/Resources" "$OUTPUT_DIR"
 cp "$BIN_DIR/ContinuityMenuBar" "$CONTENTS_DIR/MacOS/ContinuityBridge"
 chmod 755 "$CONTENTS_DIR/MacOS/ContinuityBridge"
+# Release builds retain OSO debug-map paths unless the debug symbols are stripped.
+xcrun strip -S "$CONTENTS_DIR/MacOS/ContinuityBridge"
 cp "$MACOS_DIR/Packaging/Info.plist" "$CONTENTS_DIR/Info.plist"
 cp "$MACOS_DIR/Packaging/AppIcon.icns" "$CONTENTS_DIR/Resources/AppIcon.icns"
 if [ "$TRUST_MODE" = local ]; then
@@ -96,15 +100,21 @@ test "$(plutil -extract LSMinimumSystemVersion raw "$CONTENTS_DIR/Info.plist")" 
 test "$(plutil -extract CFBundleIconFile raw "$CONTENTS_DIR/Info.plist")" = "AppIcon.icns"
 test -s "$CONTENTS_DIR/Resources/AppIcon.icns"
 test "$(find "$CONTENTS_DIR/Resources" -type f | wc -l | tr -d ' ')" = "$RESOURCE_COUNT"
-if rg -a -n -i 'BEGIN ([A-Z ]+ )?PRIVATE KEY|TASK6_PRIVATE_KEY_SENTINEL|TASK6_TOKEN_SENTINEL' "$APP_DIR"; then
-    echo "forbidden private material in app bundle" >&2
-    exit 66
-fi
-
 codesign --force --deep --sign - "$APP_DIR"
 codesign --verify --deep --strict --verbose=2 "$APP_DIR"
 find "$APP_DIR" -exec touch -h -t 202001010000 {} +
 codesign --verify --deep --strict --verbose=2 "$APP_DIR"
+if LC_ALL=C rg -a -q -i --hidden --no-ignore \
+    'BEGIN ([A-Z ]+ )?PRIVATE KEY|TASK6_PRIVATE_KEY_SENTINEL|TASK6_TOKEN_SENTINEL|/(Users|home)/' "$APP_DIR"; then
+    echo "forbidden private material or home path in app bundle" >&2
+    exit 66
+else
+    SCAN_STATUS=$?
+    if [ "$SCAN_STATUS" -ne 1 ]; then
+        echo "app bundle privacy scan failed" >&2
+        exit 66
+    fi
+fi
 
 rm -f "$OUTPUT_ZIP" "$OUTPUT_RECEIPT"
 (CDPATH= cd -- "$MACOS_DIR/dist" && COPYFILE_DISABLE=1 /usr/bin/zip -X -qry "$OUTPUT_ZIP" ContinuityBridge.app)
