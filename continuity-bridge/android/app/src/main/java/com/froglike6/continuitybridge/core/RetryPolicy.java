@@ -18,7 +18,7 @@ public final class RetryPolicy {
         if (error instanceof javax.net.ssl.SSLException) return Decision.TLS_TERMINAL;
         if (error instanceof SocketTimeoutException || error instanceof java.io.IOException) return Decision.RETRY;
         if (status >= 200 && status < 300) return Decision.SUCCESS;
-        if (status == 401 || status == 403) return Decision.AUTH_TERMINAL;
+        if ((status >= 300 && status < 400) || status == 401 || status == 403) return Decision.AUTH_TERMINAL;
         if (status == 408 || status == 429 || status >= 500) return Decision.RETRY;
         return Decision.CLIENT_TERMINAL;
     }

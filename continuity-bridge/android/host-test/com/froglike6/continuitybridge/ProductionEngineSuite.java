@@ -289,7 +289,7 @@ final class ProductionEngineSuite {
             FileBridgeStateStore store = FileBridgeStateStore.create(path, TestStateCipher.create(), "device", "epoch", 4, 4); LoopbackTransport transport = new LoopbackTransport();
             ConnectionOwner owner = new ConnectionOwner(); BridgeEngine engine = new BridgeEngine(store, transport, new FixedToken(), new RecordingApplier(), owner);
             check(engine.step(owner.start()).status() == BridgeEngine.Status.SECURITY_FAILURE, "corrupt state retried");
-            return 4;
+            return 11;
         } finally { deleteTree(directory); }
     }
 
@@ -350,6 +350,19 @@ final class ProductionEngineSuite {
         expectInvalid(source.replace("\"expiresAtMs\": 1700000900200", "\"expiresAtMs\": 1"));
         String oversizedNotification = source.replace("fixture-notification-key", repeat('k', 4096)).replace("com.example.harmlessfixture", repeat('p', 255))
                 .replace("Harmless Fixture", repeat('a', 4096)).replace("Fixture title", repeat('t', 8192)).replace("Fixture body", repeat('b', 65536));
+        for (int code : new int[] { 301, 302, 303, 307, 308 }) {
+            Harness redirected = Harness.create(fixtures, eventFetch("{}"));
+            redirected.transport.poll.clear();
+            redirected.transport.poll.add(new TransportResponse(code, "<html>login</html>"));
+            BridgeEngine.Result result = redirected.engine.step(redirected.lease);
+            check(result.status() == BridgeEngine.Status.AUTH_FAILURE && ("Http" + code).equals(result.errorClass()), "redirect not terminal auth");
+        }
+        Harness accessMissing = Harness.create(fixtures, eventFetch("{}"));
+        accessMissing.transport.pollError = new AccessAuthenticationException();
+        check(accessMissing.engine.step(accessMissing.lease).status() == BridgeEngine.Status.AUTH_FAILURE, "missing Access not terminal auth");
+        Harness accessCorrupt = Harness.create(fixtures, eventFetch("{}"));
+        accessCorrupt.transport.pollError = new SecureStoreException("secure_access_unavailable");
+        check(accessCorrupt.engine.step(accessCorrupt.lease).status() == BridgeEngine.Status.SECURITY_FAILURE, "corrupt Access not terminal security");
         expectInvalid(oversizedNotification);
         expectInvalid(source.replace("\"payload\": {", "\"future\":\"" + repeat('u', 1_114_112) + "\",\"payload\":{"));
         ProtocolEvent invalidOutbound = new ProtocolEvent(repeat('e', 129), "device", "android", "epoch", 1,
@@ -431,10 +444,10 @@ final class ProductionEngineSuite {
         final Queue<TransportResponse> publish = new ArrayDeque<>(), poll = new ArrayDeque<>(), ack = new ArrayDeque<>();
         final List<String> published = new ArrayList<>(), pollCursors = new ArrayList<>(), acked = new ArrayList<>();
         final CountDownLatch entered = new CountDownLatch(1), release = new CountDownLatch(1); volatile boolean blockPoll, cancelled;
-        IOException pollError;
+        Exception pollError;
         Runnable onPublish, onPoll;
         @Override public TransportResponse publish(String token, ProtocolEvent event) throws IOException { published.add(EventCodec.encode(event)); if (onPublish != null) { Runnable action = onPublish; onPublish = null; action.run(); } return next(publish); }
-        @Override public TransportResponse poll(String token, String cursor) throws IOException { pollCursors.add(cursor); entered.countDown(); if (onPoll != null) { Runnable action = onPoll; onPoll = null; action.run(); } if (pollError != null) throw pollError; if (blockPoll) { try { release.await(); } catch (InterruptedException error) { Thread.currentThread().interrupt(); } throw new CancelledTransportException(); } return next(poll); }
+        @Override public TransportResponse poll(String token, String cursor) throws Exception { pollCursors.add(cursor); entered.countDown(); if (onPoll != null) { Runnable action = onPoll; onPoll = null; action.run(); } if (pollError != null) throw pollError; if (blockPoll) { try { release.await(); } catch (InterruptedException error) { Thread.currentThread().interrupt(); } throw new CancelledTransportException(); } return next(poll); }
         @Override public TransportResponse acknowledge(String token, String deviceId, List<String> ids) throws IOException { acked.addAll(ids); return next(ack); }
         @Override public void cancel() { cancelled = true; release.countDown(); }
         private static TransportResponse next(Queue<TransportResponse> queue) throws IOException { TransportResponse response = queue.poll(); if (response == null) throw new IOException("no scripted response"); return response; }

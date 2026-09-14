@@ -15,6 +15,7 @@ final class RelayTransport implements BridgeTransport {
         String endpoint();
         String pin();
         boolean systemTrust();
+        default boolean accessEnabled() { return false; }
     }
     interface ConnectionFactory { HttpsURLConnection open(URL target) throws java.io.IOException; }
     interface DiagnosticSink { void record(TransportResponse.FailureMetadata metadata); }
@@ -23,6 +24,7 @@ final class RelayTransport implements BridgeTransport {
     private final Settings settings;
     private final ConnectionFactory connections;
     private final DiagnosticSink diagnostics;
+    private final AccessCredentials.Provider accessCredentials;
     private Request active;
     private boolean pollWakePending;
     private volatile boolean cancelled;
@@ -32,15 +34,23 @@ final class RelayTransport implements BridgeTransport {
             @Override public String endpoint() { return config.endpoint(); }
             @Override public String pin() { return config.pin(); }
             @Override public boolean systemTrust() { return config.systemTrust(); }
+            @Override public boolean accessEnabled() { return config.accessEnabled(); }
         }, new ConnectionFactory() {
             @Override public HttpsURLConnection open(URL target) throws java.io.IOException { return (HttpsURLConnection) target.openConnection(); }
         }, new DiagnosticSink() {
             @Override public void record(TransportResponse.FailureMetadata metadata) { MetadataLog.transportFailure(metadata); }
-        });
+        }, new TokenStore(context));
     }
 
     RelayTransport(Context context, Settings settings, ConnectionFactory connections, DiagnosticSink diagnostics) {
+        this(context, settings, connections, diagnostics, new AccessCredentials.Provider() {
+            @Override public AccessCredentials loadAccess() { return null; }
+        });
+    }
+
+    RelayTransport(Context context, Settings settings, ConnectionFactory connections, DiagnosticSink diagnostics, AccessCredentials.Provider accessCredentials) {
         this.context = context; this.settings = settings; this.connections = connections; this.diagnostics = diagnostics;
+        this.accessCredentials = accessCredentials;
     }
 
     @Override public TransportResponse poll(String token, String cursor) throws Exception {
@@ -82,6 +92,7 @@ final class RelayTransport implements BridgeTransport {
     }
 
     private TransportResponse request(String token, String method, String path, String body) throws Exception {
+        AccessCredentials access = AccessCredentials.required(settings.accessEnabled(), accessCredentials);
         URI base = ConfigValidator.httpsUrl(settings.endpoint());
         URL target = new URI(base.getScheme(), null, base.getHost(), base.getPort(), path.substring(0, path.indexOf('?') < 0 ? path.length() : path.indexOf('?')),
                 path.indexOf('?') < 0 ? null : path.substring(path.indexOf('?') + 1), null).toURL();
@@ -101,7 +112,12 @@ final class RelayTransport implements BridgeTransport {
                 } finally { ca.close(); }
             }
             connection.setConnectTimeout(10_000); connection.setReadTimeout(30_000);
+            connection.setInstanceFollowRedirects(false);
             connection.setRequestMethod(method); connection.setRequestProperty("Authorization", "Bearer " + token);
+            if (access != null) {
+                connection.setRequestProperty("CF-Access-Client-Id", access.clientId());
+                connection.setRequestProperty("CF-Access-Client-Secret", access.clientSecret());
+            }
             connection.setRequestProperty("Accept", "application/json");
             if (body != null) {
                 byte[] bytes = body.getBytes(StandardCharsets.UTF_8); connection.setDoOutput(true);
@@ -115,8 +131,8 @@ final class RelayTransport implements BridgeTransport {
                 checkRequest(request);
             }
             int status = connection.getResponseCode();
-            InputStream stream = status >= 400 ? connection.getErrorStream() : connection.getInputStream();
-            TransportResponse response = new TransportResponse(status, stream == null ? "" : read(stream));
+            int responseLimit = 1_200_000;
+            TransportResponse response = new TransportResponse(status, responseBody(connection, status, responseLimit));
             TransportResponse.FailureMetadata failure = TransportResponse.failureMetadata(method, path, status, response.body());
             if (failure != null) diagnostics.record(failure);
             return response;
@@ -133,10 +149,21 @@ final class RelayTransport implements BridgeTransport {
         }
     }
 
-    private static String read(InputStream input) throws Exception {
+    private static String responseBody(HttpsURLConnection connection, int status, int limit) throws Exception {
+        if (status >= 300 && status < 400) return "";
+        try {
+            InputStream stream = status >= 400 ? connection.getErrorStream() : connection.getInputStream();
+            return stream == null ? "" : read(stream, limit);
+        } catch (Exception error) {
+            if (status == 401 || status == 403) return "";
+            throw error;
+        }
+    }
+
+    private static String read(InputStream input, int limit) throws Exception {
         try {
             ByteArrayOutputStream output = new ByteArrayOutputStream(); byte[] buffer = new byte[8192]; int count;
-            while ((count = input.read(buffer)) >= 0) { if (output.size() + count > 1_200_000) throw new java.io.IOException("response_too_large"); output.write(buffer, 0, count); }
+            while ((count = input.read(buffer)) >= 0) { if (output.size() + count > limit) throw new java.io.IOException("response_too_large"); output.write(buffer, 0, count); }
             return output.toString("UTF-8");
         } finally { input.close(); }
     }

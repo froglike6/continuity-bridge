@@ -90,6 +90,7 @@ public final class BridgeEngine {
                 }
             });
             Result finalAck = flushAcks(token, state, lease); return finalAck == null ? result(Status.CONNECTED, null) : finalAck;
+        } catch (AccessAuthenticationException error) { return result(Status.AUTH_FAILURE, error.getClass().getSimpleName());
         } catch (SecureStoreException error) { return result(Status.SECURITY_FAILURE, error.getClass().getSimpleName());
         } catch (CorruptStateException error) { return result(Status.SECURITY_FAILURE, error.getClass().getSimpleName());
         } catch (PollWakeException error) { return result(owner.owns(lease) ? Status.OUTBOX_READY : Status.STOPPED, null);
@@ -119,7 +120,7 @@ public final class BridgeEngine {
     }
     private static Result httpFailure(int status) {
         if (status >= 200 && status < 300) return null;
-        if (status == 401 || status == 403) return result(Status.AUTH_FAILURE, "Http" + status);
+        if ((status >= 300 && status < 400) || status == 401 || status == 403) return result(Status.AUTH_FAILURE, "Http" + status);
         if (status == 408 || status == 429 || status >= 500) return result(Status.RETRY, "Http" + status);
         return result(Status.PROTOCOL_FAILURE, "Http" + status);
     }
