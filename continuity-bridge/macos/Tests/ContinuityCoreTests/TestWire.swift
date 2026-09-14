@@ -76,6 +76,7 @@ final class ScriptedURLProtocol: URLProtocol, @unchecked Sendable {
     nonisolated(unsafe) private static var steps: [ScriptStep] = []
     nonisolated(unsafe) private static var mismatch: String?
     nonisolated(unsafe) private static var requests = 0
+    nonisolated(unsafe) private static var capturedRequests: [URLRequest] = []
     nonisolated(unsafe) private static var cancellations = 0
     nonisolated(unsafe) private static var cancelledHangs = 0
     nonisolated(unsafe) private static var startSignal: AsyncSignal?
@@ -90,6 +91,7 @@ final class ScriptedURLProtocol: URLProtocol, @unchecked Sendable {
         return configuration
     }
     static var requestCount: Int { lock.withLock { requests } }
+    static var observedRequests: [URLRequest] { lock.withLock { capturedRequests } }
     static var cancellationCount: Int { lock.withLock { cancellations } }
     static var cancelledHangCount: Int { lock.withLock { cancelledHangs } }
     static var failure: String? { lock.withLock { mismatch } }
@@ -100,6 +102,7 @@ final class ScriptedURLProtocol: URLProtocol, @unchecked Sendable {
             steps = values
             mismatch = nil
             requests = 0
+            capturedRequests = []
             cancellations = 0
             cancelledHangs = 0
             startSignal = start
@@ -113,6 +116,7 @@ final class ScriptedURLProtocol: URLProtocol, @unchecked Sendable {
     override func startLoading() {
         let result: (ScriptStep?, AsyncSignal?, AsyncSignal?) = Self.lock.withLock {
             Self.requests += 1
+            Self.capturedRequests.append(request)
             guard !Self.steps.isEmpty else {
                 Self.mismatch = "unexpected request"
                 return (nil, Self.startSignal, Self.cancellationSignal)

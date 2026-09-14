@@ -21,11 +21,14 @@ public struct ConnectionConfiguration: Sendable {
     public let endpoint: URL
     public let tlsPolicy: TLSPolicy
     public let longPollMilliseconds: Int
+    public let cloudflareAccessEnabled: Bool
 
-    public init(endpoint: URL, tlsPolicy: TLSPolicy, longPollMilliseconds: Int = 25_000) {
+    public init(endpoint: URL, tlsPolicy: TLSPolicy, longPollMilliseconds: Int = 25_000,
+                cloudflareAccessEnabled: Bool = false) {
         self.endpoint = endpoint
         self.tlsPolicy = tlsPolicy
         self.longPollMilliseconds = min(max(longPollMilliseconds, 0), 25_000)
+        self.cloudflareAccessEnabled = cloudflareAccessEnabled
     }
 
     public static var test: ConnectionConfiguration {
@@ -40,6 +43,7 @@ public struct ConnectionConfiguration: Sendable {
 public struct ConnectionDependencies: Sendable {
     public let state: DurableStateStore
     public let tokenProvider: @Sendable () throws -> String
+    public let accessCredentialsProvider: @Sendable () throws -> CloudflareAccessCredentials
     public let apply: @Sendable (BridgeEvent) async throws -> Void
     public let sessionConfiguration: @Sendable () -> URLSessionConfiguration
     public let sleep: @Sendable (UInt64) async throws -> Void
@@ -50,9 +54,13 @@ public struct ConnectionDependencies: Sendable {
                 sessionConfiguration: @escaping @Sendable () -> URLSessionConfiguration = { .ephemeral },
                 sleep: @escaping @Sendable (UInt64) async throws -> Void = { milliseconds in
                     try await Task.sleep(for: .milliseconds(milliseconds))
-                }, jitter: @escaping @Sendable () -> Double = { Double.random(in: 0...1) }) {
+                }, jitter: @escaping @Sendable () -> Double = { Double.random(in: 0...1) },
+                accessCredentialsProvider: @escaping @Sendable () throws -> CloudflareAccessCredentials = {
+                    throw KeychainError.missingItem
+                }) {
         self.state = state
         self.tokenProvider = tokenProvider
+        self.accessCredentialsProvider = accessCredentialsProvider
         self.apply = apply
         self.sessionConfiguration = sessionConfiguration
         self.sleep = sleep
@@ -86,4 +94,5 @@ public struct AckResponse: Decodable, Sendable { public let acked: [String]; pub
 
 public enum TransportError: Error, Equatable {
     case invalidURL, invalidResponse, malformedResponse, applicationFailed, httpStatus(Int), cancelled
+    case accessCredentialsUnavailable
 }

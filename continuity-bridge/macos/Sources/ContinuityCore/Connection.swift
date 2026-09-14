@@ -2,6 +2,7 @@ import Foundation
 
 public actor ConnectionActor {
     public private(set) var status: ConnectionStatus = .stopped
+    public private(set) var failureDescription: String?
     public private(set) var generation = 0
     private let configuration: ConnectionConfiguration
     private let dependencies: ConnectionDependencies
@@ -24,6 +25,7 @@ public actor ConnectionActor {
         generation += 1
         let currentGeneration = generation
         status = .connecting
+        failureDescription = nil
         let task = Task { [weak self] in
             guard let self else { return }
             await self.runLoop(generation: currentGeneration)
@@ -41,6 +43,7 @@ public actor ConnectionActor {
         await task?.value
         runTask = nil
         status = .stopped
+        failureDescription = nil
     }
 
     public func outboxChanged() {
@@ -61,6 +64,7 @@ public actor ConnectionActor {
                 switch disposition(for: error) {
                 case .terminalAuthentication:
                     status = .authenticationFailed
+                    failureDescription = authenticationDescription(for: error)
                     break
                 case .terminal:
                     status = terminalStatus(for: error)
@@ -83,7 +87,7 @@ public actor ConnectionActor {
 
     private func flushOutbox(token: String) async throws {
         while let event = await dependencies.state.snapshot().outbox.first {
-            var request = makeRequest(path: "/v1/events", method: "POST", token: token)
+            var request = try makeRequest(path: "/v1/events", method: "POST", token: token)
             request.httpBody = try EventCodec.encode(event)
             let result = try await send(request, as: PublishResponse.self)
             try ResponseValidation.publish(result.value, status: result.status, expectedEventId: event.eventId)
@@ -140,7 +144,7 @@ public actor ConnectionActor {
             let eventIds: [String]
         }
         let snapshot = await dependencies.state.snapshot()
-        var request = makeRequest(path: "/v1/acks", method: "POST", token: token)
+        var request = try makeRequest(path: "/v1/acks", method: "POST", token: token)
         request.httpBody = try JSONEncoder().encode(Ack(recipientDeviceId: snapshot.deviceId,
                                                        recipientRole: .macOS, eventIds: [eventId]))
         let result = try await send(request, as: AckResponse.self)
@@ -156,16 +160,25 @@ public actor ConnectionActor {
         guard let url = components.url else { throw TransportError.invalidURL }
         var request = URLRequest(url: url)
         request.httpMethod = "GET"
-        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        try authenticate(&request, token: token)
         return request
     }
 
-    private func makeRequest(path: String, method: String, token: String) -> URLRequest {
+    private func makeRequest(path: String, method: String, token: String) throws -> URLRequest {
         var request = URLRequest(url: configuration.endpoint.appendingPathComponent(path))
         request.httpMethod = method
         request.setValue("application/json; charset=utf-8", forHTTPHeaderField: "Content-Type")
-        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        try authenticate(&request, token: token)
         return request
+    }
+
+    private func authenticate(_ request: inout URLRequest, token: String) throws {
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        guard configuration.cloudflareAccessEnabled else { return }
+        let credentials: CloudflareAccessCredentials
+        do { credentials = try dependencies.accessCredentialsProvider() }
+        catch { throw TransportError.accessCredentialsUnavailable }
+        credentials.apply(to: &request)
     }
 
     private func send<T: Decodable>(_ request: URLRequest, as type: T.Type) async throws -> (status: Int, value: T) {
@@ -212,5 +225,20 @@ public actor ConnectionActor {
             .serverCertificateHasUnknownRoot, .serverCertificateNotYetValid,
             .secureConnectionFailed].contains(code) { return .tlsFailed }
         return .disconnected
+    }
+
+    private func authenticationDescription(for error: Error) -> String {
+        switch error {
+        case TransportError.accessCredentialsUnavailable:
+            return "이 Mac의 Cloudflare Access 자격증명을 읽지 못했습니다. 설정에서 다시 저장해 주세요."
+        case TransportError.httpStatus(300...399):
+            return "인증 페이지로의 이동을 차단했습니다. 서버 주소와 Cloudflare Access 설정을 확인해 주세요."
+        case TransportError.httpStatus(403):
+            return configuration.cloudflareAccessEnabled
+                ? "접근이 거부되었습니다. Access 자격증명·서비스 인증 정책과 릴레이 토큰을 확인해 주세요."
+                : "접근이 거부되었습니다. 설정에서 이 Mac의 릴레이 인증 토큰을 확인해 주세요."
+        default:
+            return "릴레이 인증에 실패했습니다. 이 Mac의 인증 토큰을 확인해 주세요."
+        }
     }
 }

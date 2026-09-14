@@ -12,6 +12,8 @@ public struct RetryPolicy: Sendable {
     }
 
     public static func classify(statusCode: Int?, error: Error?) -> FailureDisposition {
+        if error as? TransportError == .accessCredentialsUnavailable || error is KeychainError
+            || error is CloudflareAccessCredentialError { return .terminalAuthentication }
         if let urlError = error as? URLError {
             switch urlError.code {
             case .timedOut, .networkConnectionLost, .notConnectedToInternet, .cannotConnectToHost,
@@ -22,7 +24,7 @@ public struct RetryPolicy: Sendable {
         guard let statusCode else { return error == nil ? .success : .terminal }
         switch statusCode {
         case 200...299: return .success
-        case 401: return .terminalAuthentication
+        case 300...399, 401, 403: return .terminalAuthentication
         case 500...599: return .retryable
         default: return .terminal
         }
