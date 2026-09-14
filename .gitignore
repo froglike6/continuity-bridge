@@ -8,6 +8,7 @@
 **/.gradle/
 **/build/
 **/local.properties
+continuity-bridge/android/dependencies/.embedded-cache/
 continuity-bridge/macos/.build/
 continuity-bridge/macos/.swiftpm/
 continuity-bridge/macos/dist/

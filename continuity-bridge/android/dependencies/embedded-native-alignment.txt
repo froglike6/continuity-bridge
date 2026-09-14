@@ -1,0 +1,39 @@
+Embedded native ABI inspection, 2026-09-13
+Tool: /usr/bin/objdump -p on extracted ELF binaries (macOS LLVM objdump)
+Reference: https://developer.android.com/guide/practices/page-sizes
+Rule: LOAD alignment >= 2**14; (GNU_RELRO vaddr + memsz) % 0x4000 == 0.
+
+conscrypt-android-2.7.0.aar / jni/arm64-v8a/libconscrypt_jni.so
+SHA-256 b57fbe4527d8f9fb6a249f02034b32423bc9cae1caccb4ac3abe35b6aa226882
+LOAD alignments: 2**14, 2**14, 2**14
+GNU_RELRO: vaddr 0x28a2a0 + memsz 0x19d60 = 0x2a4000; remainder 0
+DT_NEEDED: liblog.so libm.so libdl.so libc.so
+
+conscrypt-android-2.7.0.aar / jni/x86_64/libconscrypt_jni.so
+SHA-256 b5e6823520dd79f41f36cf1e36a8d72c4651823188708a6c68e2fb752be8e55d
+LOAD alignments: 2**14, 2**14, 2**14
+GNU_RELRO: vaddr 0x2c2290 + memsz 0x19d70 = 0x2dc000; remainder 0
+DT_NEEDED: liblog.so libm.so libdl.so libc.so
+
+spake2-android-2.2.1.aar / jni/arm64-v8a/libspake2.so
+SHA-256 2c243f1aef14dedb6b289bf913858d9b7244fb783e5886c3b8ef286a20677d78
+LOAD alignments: 2**14, 2**14
+GNU_RELRO: vaddr 0xa540 + memsz 0xac0 = 0xb000; remainder 0x3000
+DT_NEEDED: libm.so libdl.so libc.so
+
+spake2-android-2.2.1.aar / jni/x86_64/libspake2.so
+SHA-256 1e9717439ebf69eec3d7a527feefb819c56b70b321cff5654621c2c82e4a8247
+LOAD alignments: 2**14, 2**14
+GNU_RELRO: vaddr 0xc050 + memsz 0xfb0 = 0xd000; remainder 0x1000
+DT_NEEDED: libm.so libdl.so libc.so
+
+SPAKE2 LOAD checks pass, but its GNU_RELRO end check fails. Retain these
+unmodified pinned binaries for the requested real-device/emulator dlopen
+and pairing test before deciding whether a source rebuild is required.
+No full native-runtime or 16 KB compatibility claim is made here.
+
+Comparison only; not included in embedded.lock:
+conscrypt-android-2.5.3.aar SHA-256
+551ae4e301c571760d1791e647db6ed1dcb10d34dcae7aa12b67f220f2ce98d1
+arm64: LOAD 2**14, 2**14; RELRO end 0x203000; remainder 0x3000.
+x86_64: LOAD 2**14, 2**14; RELRO end 0x264000; remainder 0.

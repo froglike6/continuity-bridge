@@ -1,0 +1,55 @@
+Embedded ADB dependency source provenance
+Verified 2026-09-13. Artifact bytes and source archives are pinned by SHA-256
+in dependencies/embedded.lock. Release tags below were resolved to commits;
+the corresponding commit URLs, rather than mutable branch URLs, are used.
+
+LibADB Android 3.1.1
+Source: https://github.com/MuntashirAkon/libadb-android/tree/c849886ebc6d48e7b46d967e78a6bb65c90c3b74
+Archive: https://codeload.github.com/MuntashirAkon/libadb-android/tar.gz/c849886ebc6d48e7b46d967e78a6bb65c90c3b74
+POM: https://jitpack.io/com/github/MuntashirAkon/libadb-android/3.1.1/libadb-android-3.1.1.pom
+Upstream COPYING and LICENSES/{Apache-2.0,BSD-3-Clause,MIT,GPL-3.0-or-later}
+were copied without modification from this commit. The copyright attributions
+in NOTICE.txt are from the source files and README.md at this same commit.
+
+SPAKE2-Java / spake2-android 2.2.1
+Source: https://github.com/MuntashirAkon/spake2-java/tree/7615ddd680b990e14513ebb66eac4cb0dbf82464
+Archive: https://codeload.github.com/MuntashirAkon/spake2-java/tar.gz/7615ddd680b990e14513ebb66eac4cb0dbf82464
+POM: https://jitpack.io/com/github/MuntashirAkon/spake2-java/spake2-android/2.2.1/spake2-android-2.2.1.pom
+LGPL-3.0.txt is the unchanged LICENSE at this revision. The Gradle module at
+this tag still says version 2.2.0; the resolved tag and published JitPack
+artifact/POM identify release 2.2.1.
+
+SPAKE2-C native submodule
+Source: https://github.com/MuntashirAkon/spake2-c/tree/0d15933e5ba3e662cb01245a7ac0dc9fca3eac31
+Archive: https://codeload.github.com/MuntashirAkon/spake2-c/tar.gz/0d15933e5ba3e662cb01245a7ac0dc9fca3eac31
+This is the gitlink at android/src/main/cpp/spake2-c in SPAKE2-Java 2.2.1.
+spake2-c-NOTICES.txt preserves the source-file copyright and license headers.
+
+Conscrypt Android 2.7.0
+Source: https://github.com/google/conscrypt/tree/0d01796fd9701e8b578556df1d85c3327b3f5f45
+Archive: https://codeload.github.com/google/conscrypt/tar.gz/0d01796fd9701e8b578556df1d85c3327b3f5f45
+POM: https://repo.maven.apache.org/maven2/org/conscrypt/conscrypt-android/2.7.0/conscrypt-android-2.7.0.pom
+conscrypt-NOTICE.txt and conscrypt-LICENSE.{harmony,netty}.txt are unchanged
+copies of NOTICE and licenses/LICENSE.{harmony,netty}.txt at this revision.
+
+BoringSSL, as declared by Conscrypt 2.7.0's org/conscrypt/conscrypt.properties
+Source: https://github.com/google/boringssl/tree/7c1efd8d6ffb36a57feba44e8c73cf674801f3cb
+Archive: https://codeload.github.com/google/boringssl/tar.gz/7c1efd8d6ffb36a57feba44e8c73cf674801f3cb
+License: https://raw.githubusercontent.com/google/boringssl/7c1efd8d6ffb36a57feba44e8c73cf674801f3cb/LICENSE
+The license is copied without modification as conscrypt-BoringSSL-LICENSE.txt.
+BoringSSL is incorporated in libconscrypt_jni.so. Its source is available at
+the immutable archive URL above; that large archive is not fetched by default.
+
+Bouncy Castle bcprov-jdk15to18 1.81
+Source: https://github.com/bcgit/bc-java/tree/228211ecb973fe87fdd0fc4ab16ba0446ec1a29c
+Published sources: https://repo.maven.apache.org/maven2/org/bouncycastle/bcprov-jdk15to18/1.81/bcprov-jdk15to18-1.81-sources.jar
+License: https://raw.githubusercontent.com/bcgit/bc-java/228211ecb973fe87fdd0fc4ab16ba0446ec1a29c/LICENSE.html
+The r1rv81 annotated tag resolves to this commit. bouncycastle-LICENSE.html
+is an unchanged copy; the same text is printed by the binary LICENSE class.
+
+AndroidX Annotation 1.3.0 (compile only)
+Published sources: https://dl.google.com/dl/android/maven2/androidx/annotation/annotation/1.3.0/annotation-1.3.0-sources.jar
+Source artifact SHA-256: f3f818e76da236bb419bf90bdf86be49349f0f601a13cc2e735c00504f7f6090
+POM: https://dl.google.com/dl/android/maven2/androidx/annotation/annotation/1.3.0/annotation-1.3.0.pom
+License: Apache-2.0, as declared in the POM and source headers. The published
+source artifact is pinned directly; no unverified Git commit is asserted.

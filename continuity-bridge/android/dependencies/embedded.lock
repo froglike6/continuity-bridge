@@ -1,0 +1,17 @@
+# sha256 kind filename https-url; data only, never sourced or evaluated
+e6fcb495a20a507ca4a125afc9c554e838a84b3a15fbcc29f7deafd0f88bbb58 runtime-aar libadb-android-3.1.1.aar https://jitpack.io/com/github/MuntashirAkon/libadb-android/3.1.1/libadb-android-3.1.1.aar
+8798fb6c04b5d53a6307ed9481e9afe563227abd4e8b9e917c8514fa850071bb runtime-aar spake2-android-2.2.1.aar https://jitpack.io/com/github/MuntashirAkon/spake2-java/spake2-android/2.2.1/spake2-android-2.2.1.aar
+0ef9c4d9536719aaa1c92a7c694d87981fa9d4d64dd9479cc322a08aebbc651e runtime-jar bcprov-jdk15to18-1.81.jar https://repo.maven.apache.org/maven2/org/bouncycastle/bcprov-jdk15to18/1.81/bcprov-jdk15to18-1.81.jar
+86072ce711795e188e1e82214d023789d2983fafe342bcae83f046125cf64e7f runtime-aar conscrypt-android-2.7.0.aar https://repo.maven.apache.org/maven2/org/conscrypt/conscrypt-android/2.7.0/conscrypt-android-2.7.0.aar
+97dc45afefe3a1e421da42b8b6e9f90491477c45fc6178203e3a5e8a05ee8553 compile-jar annotation-1.3.0.jar https://dl.google.com/dl/android/maven2/androidx/annotation/annotation/1.3.0/annotation-1.3.0.jar
+671849d0738c320d3cdf774c6d5a652df1ab139c9ef7d391ddd5e77aeeecd61b source libadb-android-c849886ebc6d48e7b46d967e78a6bb65c90c3b74.tar.gz https://codeload.github.com/MuntashirAkon/libadb-android/tar.gz/c849886ebc6d48e7b46d967e78a6bb65c90c3b74
+003326438978b46316a22a8d742fbf3c0c5661b92106827198e0085473cdbcf3 source spake2-java-7615ddd680b990e14513ebb66eac4cb0dbf82464.tar.gz https://codeload.github.com/MuntashirAkon/spake2-java/tar.gz/7615ddd680b990e14513ebb66eac4cb0dbf82464
+6be363cf9d746dc070dec14ed240adaeac8ef60285fcb633121d0a2cbd62700c source spake2-c-0d15933e5ba3e662cb01245a7ac0dc9fca3eac31.tar.gz https://codeload.github.com/MuntashirAkon/spake2-c/tar.gz/0d15933e5ba3e662cb01245a7ac0dc9fca3eac31
+66bb3f914d820afe517cb8d4bf9a055c52455b08396ee44573769a7a3b976342 source conscrypt-0d01796fd9701e8b578556df1d85c3327b3f5f45.tar.gz https://codeload.github.com/google/conscrypt/tar.gz/0d01796fd9701e8b578556df1d85c3327b3f5f45
+0a12f1de3973888d5d54292ddb6299aa60c7906ade92c7cdea3a32d41973583d metadata libadb-android-3.1.1.pom https://jitpack.io/com/github/MuntashirAkon/libadb-android/3.1.1/libadb-android-3.1.1.pom
+7b01f048b5bf764542a81f6c8dcd93a9092bc40e0bf81cc1c8193f60c3a97f19 metadata spake2-android-2.2.1.pom https://jitpack.io/com/github/MuntashirAkon/spake2-java/spake2-android/2.2.1/spake2-android-2.2.1.pom
+d512487a0802e9f6242cfdc4048d0a8a348b20d394b8164ed4d35099ed515e4c metadata conscrypt-android-2.7.0.pom https://repo.maven.apache.org/maven2/org/conscrypt/conscrypt-android/2.7.0/conscrypt-android-2.7.0.pom
+0f7ff5b7cff58d0387d778fb9017399f4ea2e8abc3d8db76125f68d5f562f653 metadata bcprov-jdk15to18-1.81.pom https://repo.maven.apache.org/maven2/org/bouncycastle/bcprov-jdk15to18/1.81/bcprov-jdk15to18-1.81.pom
+049517c5256a4bbc8529fcdc90c4eaaf358180ac205c91660767df26465efbb0 metadata annotation-1.3.0.pom https://dl.google.com/dl/android/maven2/androidx/annotation/annotation/1.3.0/annotation-1.3.0.pom
+25186d46ccca1c3782b5585c39f222ba1766b738e1f2731b213bdeaaad343ac0 source bcprov-jdk15to18-1.81-sources.jar https://repo.maven.apache.org/maven2/org/bouncycastle/bcprov-jdk15to18/1.81/bcprov-jdk15to18-1.81-sources.jar
+f3f818e76da236bb419bf90bdf86be49349f0f601a13cc2e735c00504f7f6090 source annotation-1.3.0-sources.jar https://dl.google.com/dl/android/maven2/androidx/annotation/annotation/1.3.0/annotation-1.3.0-sources.jar

@@ -1,0 +1,65 @@
+Continuity Bridge embedded ADB dependency notices
+
+LibADB Android 3.1.1
+Copyright 2021 Muntashir Al-Islam.
+This distribution selects Apache-2.0 from upstream's
+GPL-3.0-or-later OR Apache-2.0 dual license. Preserve libadb-COPYING.txt.
+Additional upstream attributions and license combinations:
+- AdbAuthenticationFailedException: Copyright 2020 Sam Palmer;
+  BSD-3-Clause AND Apache-2.0.
+- AdbConnection, AdbProtocol, AdbStream: Copyright 2013 Cameron Gutman;
+  BSD-3-Clause AND Apache-2.0.
+- PRNGFixes: Copyright 2013 Google Inc.; MIT AND Apache-2.0.
+- AdbMdns: Copyright 2020 南宫雪珊; Copyright 2022 Muntashir Al-Islam;
+  Apache-2.0 under the selected alternative.
+See Apache-2.0.txt, libadb-BSD-3-Clause.txt and libadb-MIT.txt.
+When dependencies/patches/PairingConnectionCtx.java is present, the staged
+LibADB JAR excludes the upstream PairingConnectionCtx classes so that the
+application build compiles that source replacement. The original AAR is
+unchanged. This local patch adds bounded pairing socket setup/read behavior,
+cleanup for incomplete setup, and removal of peer-information logging.
+The source replacement and its modification notice accompany the bundle.
+
+SPAKE2 Android 2.2.1 / SPAKE2-Java
+Copyright (C) 2021 Muntashir Al-Islam.
+This application uses SPAKE2-Java, covered by GNU LGPL version 3.
+See LGPL-3.0.txt and GPL-3.0.txt. The Java and native library files remain
+unmodified upstream binaries. Full source snapshots, including the spake2-c
+submodule that GitHub parent archives omit, are provided in sources/.
+Native spake2-c has additional notices in spake2-c-NOTICES.txt:
+- Copyright (c) 2020 Google Inc. and (c) 2021 Muntashir Al-Islam (ISC).
+- Copyright (C) 2007-2015 Free Software Foundation, Inc. and
+  Copyright (C) 2021 Muntashir Al-Islam (LGPL-2.1-or-later; LGPL-3.0 selected).
+- Copyright (c) 2015-2020 the fiat-crypto authors (MIT).
+- Ref10 Ed25519 code from SUPERCOP 20141124 is public domain.
+
+Conscrypt Android 2.7.0
+Copyright 2016 The Android Open Source Project.
+Apache-2.0; see Apache-2.0.txt and conscrypt-NOTICE.txt. The upstream Netty
+and Harmony license files are retained alongside that notice.
+Its bundled BoringSSL revision is recorded in SOURCES.txt and carries the
+upstream conscrypt-BoringSSL-LICENSE.txt. All packaged binaries are unmodified.
+
+Bouncy Castle bcprov-jdk15to18 1.81
+Copyright (c) 2000-2023 The Legion of the Bouncy Castle Inc.
+(https://www.bouncycastle.org).
+MIT-style Bouncy Castle license; see bouncycastle-LICENSE.html.
+
+AndroidX Annotation 1.3.0
+Copyright The Android Open Source Project. Apache-2.0.
+Compile-only dependency; its bytecode is not packaged in the APK.
+
+Redistributing a combined application
+Keep this notice and the accompanying license texts with every distributed
+APK, for example in assets/licenses/embedded, and give prominent notice that
+SPAKE2-Java is used under LGPL-3.0. Source URLs alone are not the entire LGPL
+combined-work requirement. To use LGPL-3.0 section 4(d)(0), distribute the
+Minimal Corresponding Source and Corresponding Application Code in a form
+that permits rebuilding/relinking with a modified library, together with the
+necessary build instructions and any required Installation Information.
+Do not restrict modification of the LGPL portions or reverse engineering for
+debugging those modifications. The dependency source bundle does not contain
+the application's corresponding code; include the application/helper sources
+or suitable relinkable object code and build scripts in a release source kit.
+A JAR merged into classes.dex is not being treated as the replaceable shared
+library mechanism described by LGPL-3.0 section 4(d)(1).

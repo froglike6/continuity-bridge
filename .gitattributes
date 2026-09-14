@@ -1,0 +1,2 @@
+# Preserve the exact upstream license text, including its original line endings.
+continuity-bridge/android/dependencies/embedded-licenses/bouncycastle-LICENSE.html whitespace=-blank-at-eol
