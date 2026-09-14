@@ -20,6 +20,8 @@ public final class NotificationMappingSuite {
         progressTextRequiresTaskCue();
         progressRejectsHardwareStatus();
         progressPreservesTaskFilenames();
+        deliveryPolicyFiltersMaintenance();
+        deliveryPolicyPreservesTaskLifecycle();
         redactionRequiresDeliveredMarker();
         optionalFieldsPreserveLegacyCallers();
         contentlessGroupSummaryFilter();
@@ -155,6 +157,25 @@ public final class NotificationMappingSuite {
                 "battery percentage in task body accepted");
     }
 
+    private static void deliveryPolicyFiltersMaintenance() {
+        for (String category : new String[] { "sys", "service", "status", "transport" }) {
+            check(!NotificationDeliveryPolicy.shouldMirror(category, false, false, 4, false, false),
+                    "maintenance category was mirrored: " + category);
+            check(!NotificationDeliveryPolicy.shouldMirror(category, true, true, 4, true, true),
+                    "maintenance category bypassed filtering with progress: " + category);
+        }
+        check(!NotificationDeliveryPolicy.shouldMirror(null, true, false, 4, false, false), "persistent non-task mirrored");
+        check(!NotificationDeliveryPolicy.shouldMirror(null, false, true, 4, false, false), "foreground service mirrored");
+        for (int importance : new int[] { 0, 1, 2 })
+            check(!NotificationDeliveryPolicy.shouldMirror("msg", false, false, importance, false, false),
+                    "quiet message mirrored: " + importance);
+        check(NotificationDeliveryPolicy.shouldMirror("msg", false, false, 3, false, false), "ordinary message dropped");
+        check(NotificationDeliveryPolicy.shouldMirror("alarm", false, false, 4, false, false), "alarm dropped");
+        check(NotificationDeliveryPolicy.shouldMirror(null, false, false, -1000, false, false), "unknown importance dropped");
+        check(!NotificationDeliveryPolicy.shouldMirror("progress", true, false, 3, false, false),
+                "category alone bypassed task validation");
+    }
+
     private static void progressPreservesTaskFilenames() {
         String[][] tasks = { { "Downloading battery.pdf", "37%" }, { "Uploading storage.zip", "37%" },
                 { "Download", "battery.pdf 37%" }, { "volume.mp4", "Uploading 37%" },
@@ -166,6 +187,22 @@ public final class NotificationMappingSuite {
             check(explicit != null && explicit.getValue() == 74 && explicit.getMax() == 200,
                     "task source progress lost for filename: " + task[0]);
         }
+    }
+
+    private static void deliveryPolicyPreservesTaskLifecycle() {
+        for (int importance : new int[] { 0, 1, 2, 3, 4 }) {
+            check(NotificationDeliveryPolicy.shouldMirror("progress", true, true, importance, true, false),
+                    "task progress dropped: " + importance);
+            check(NotificationDeliveryPolicy.shouldMirror(null, false, false, importance, false, true),
+                    "accepted task completion dropped: " + importance);
+            check(NotificationDeliveryPolicy.shouldMirror("err", false, false, importance, false, true),
+                    "accepted task failure dropped: " + importance);
+        }
+        check(!NotificationDeliveryPolicy.shouldMirror("err", false, false, 2, false, false),
+                "unrelated quiet failure mistaken for accepted progress completion");
+        NotificationProgress battery = NotificationContent.progress(67, 100, false, true, "Charging", "67%");
+        check(!NotificationDeliveryPolicy.shouldMirror(null, true, false, 3, battery != null, false),
+                "charging bypassed the policy through progress metadata");
     }
 
     private static void redactionRequiresDeliveredMarker() {
