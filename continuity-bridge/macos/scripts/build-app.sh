@@ -63,6 +63,7 @@ mkdir -p "$CONTENTS_DIR/MacOS" "$CONTENTS_DIR/Resources" "$OUTPUT_DIR"
 cp "$BIN_DIR/ContinuityMenuBar" "$CONTENTS_DIR/MacOS/ContinuityBridge"
 chmod 755 "$CONTENTS_DIR/MacOS/ContinuityBridge"
 cp "$MACOS_DIR/Packaging/Info.plist" "$CONTENTS_DIR/Info.plist"
+cp "$MACOS_DIR/Packaging/AppIcon.icns" "$CONTENTS_DIR/Resources/AppIcon.icns"
 cp "$CA_SOURCE" "$CONTENTS_DIR/Resources/ca.pem"
 cp "$PIN_SOURCE" "$CONTENTS_DIR/Resources/server-cert.sha256"
 
@@ -71,7 +72,9 @@ test "$(plutil -extract CFBundleIdentifier raw "$CONTENTS_DIR/Info.plist")" = \
     "com.froglike6.continuitybridge.macos"
 test "$(plutil -extract LSUIElement raw "$CONTENTS_DIR/Info.plist")" = "true"
 test "$(plutil -extract LSMinimumSystemVersion raw "$CONTENTS_DIR/Info.plist")" = "13.0"
-test "$(find "$CONTENTS_DIR/Resources" -type f | wc -l | tr -d ' ')" = "2"
+test "$(plutil -extract CFBundleIconFile raw "$CONTENTS_DIR/Info.plist")" = "AppIcon.icns"
+test -s "$CONTENTS_DIR/Resources/AppIcon.icns"
+test "$(find "$CONTENTS_DIR/Resources" -type f | wc -l | tr -d ' ')" = "3"
 if rg -a -n -i 'BEGIN ([A-Z ]+ )?PRIVATE KEY|TASK6_PRIVATE_KEY_SENTINEL|TASK6_TOKEN_SENTINEL' "$APP_DIR"; then
     echo "forbidden private material in app bundle" >&2
     exit 66

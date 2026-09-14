@@ -10,6 +10,8 @@
     <string>com.froglike6.continuitybridge.macos</string>
     <key>CFBundleInfoDictionaryVersion</key>
     <string>6.0</string>
+    <key>CFBundleIconFile</key>
+    <string>AppIcon.icns</string>
     <key>CFBundleName</key>
     <string>Continuity Bridge</string>
     <key>CFBundlePackageType</key>
