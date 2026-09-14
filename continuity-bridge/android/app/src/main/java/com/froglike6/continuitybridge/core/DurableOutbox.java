@@ -100,9 +100,19 @@ final class DurableOutbox {
     boolean enqueueNotification(NotificationFields fields, long nowMs) {
         synchronized (store) {
             try {
-                BridgeState state = store.load(); Map<String, String> payload = new LinkedHashMap<>();
+                BridgeState state = store.load(); Map<String, Object> payload = new LinkedHashMap<>();
                 payload.put("notificationKey", fields.notificationKey()); payload.put("packageName", fields.packageName());
                 payload.put("appLabel", fields.appLabel()); payload.put("title", fields.title()); payload.put("body", fields.body());
+                if (fields.getIconPngBase64() != null) payload.put("iconPngBase64", fields.getIconPngBase64());
+                if (fields.getProgress() != null) {
+                    NotificationProgress progress = fields.getProgress(); Map<String, Object> value = new LinkedHashMap<>();
+                    value.put("value", progress.getValue()); value.put("max", progress.getMax()); value.put("indeterminate", progress.isIndeterminate());
+                    payload.put("progress", value);
+                }
+                if (fields.getIsOngoing() != null) payload.put("isOngoing", fields.getIsOngoing());
+                if (fields.getIsRedacted() != null) payload.put("isRedacted", fields.getIsRedacted());
+                if (fields.getCategory() != null) payload.put("category", fields.getCategory());
+                if (Utf8.size(MiniJson.encode(payload)) > 81_920) payload.remove("iconPngBase64");
                 ProtocolEvent event = new ProtocolEvent(ids.next(), state.deviceId(), "android", state.epoch(), state.nextSequence(),
                         "android.notification", fields.postTime(), Math.min(9_007_199_254_740_991L, nowMs + 900_000), payload);
                 store.save(state.enqueue(event, nowMs));
