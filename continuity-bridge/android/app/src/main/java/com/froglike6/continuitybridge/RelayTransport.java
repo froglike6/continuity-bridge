@@ -136,7 +136,7 @@ final class RelayTransport implements BridgeTransport {
                 checkRequest(request);
             }
             int status = connection.getResponseCode();
-            int responseLimit = 1_200_000;
+            int responseLimit = request.poll && status == 200 ? 12_582_912 : 1_200_000;
             TransportResponse response = new TransportResponse(status, responseBody(connection, status, responseLimit));
             TransportResponse.FailureMetadata failure = TransportResponse.failureMetadata(method, path, status, response.body());
             if (failure != null) diagnostics.record(failure);

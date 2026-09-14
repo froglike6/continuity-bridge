@@ -38,7 +38,7 @@ public final class RelayProtocol {
 
     @SuppressWarnings("unchecked")
     public static Fetch fetch(String body, String requestedAfter, String currentServerEpoch) {
-        Map<String, Object> object = object(body);
+        Map<String, Object> object = object(body, WireLimits.RESPONSE_BODY_BYTES);
         requireVersion(object); String serverEpoch = serverEpoch(object);
         String after = cursor(object.get("after")); String next = cursor(object.get("nextCursor"));
         boolean epochChanged = !currentServerEpoch.isEmpty() && !currentServerEpoch.equals(serverEpoch);
@@ -54,7 +54,7 @@ public final class RelayProtocol {
             if (compare(entryCursor, previous) <= 0 || compare(entryCursor, next) > 0) throw new IllegalArgumentException("invalid_event_cursor");
             Object rawEvent = entry.get("event"); if (!(rawEvent instanceof Map)) throw new IllegalArgumentException("invalid_event_entry");
             ProtocolEvent event = EventCodec.decode(MiniJson.encode(rawEvent));
-            if (!"macos".equals(event.role()) || !"clipboard.text".equals(event.kind())) throw new IllegalArgumentException("invalid_recipient_event");
+            if (!"macos".equals(event.role()) || !("clipboard.text".equals(event.kind()) || "clipboard.image".equals(event.kind()))) throw new IllegalArgumentException("invalid_recipient_event");
             entries.add(new Entry(entryCursor, event)); previous = entryCursor;
         }
         return new Fetch(next, serverEpoch, entries);
@@ -87,7 +87,12 @@ public final class RelayProtocol {
 
     @SuppressWarnings("unchecked")
     private static Map<String, Object> object(String body) {
-        if (body == null || body.getBytes(StandardCharsets.UTF_8).length > RESPONSE_LIMIT) throw new IllegalArgumentException("invalid_response_size");
+        return object(body, RESPONSE_LIMIT);
+    }
+
+    @SuppressWarnings("unchecked")
+    private static Map<String, Object> object(String body, int limit) {
+        if (body == null || body.getBytes(StandardCharsets.UTF_8).length > limit) throw new IllegalArgumentException("invalid_response_size");
         Object value = MiniJson.parse(body); if (!(value instanceof Map)) throw new IllegalArgumentException("invalid_response");
         return (Map<String, Object>) value;
     }

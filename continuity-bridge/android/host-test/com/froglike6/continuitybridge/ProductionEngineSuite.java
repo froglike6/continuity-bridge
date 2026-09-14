@@ -433,7 +433,7 @@ final class ProductionEngineSuite {
         String oversizedNotification = source.replace("fixture-notification-key", repeat('k', 4096)).replace("com.example.harmlessfixture", repeat('p', 255))
                 .replace("Harmless Fixture", repeat('a', 4096)).replace("Fixture title", repeat('t', 8192)).replace("Fixture body", repeat('b', 65536));
         expectInvalid(oversizedNotification);
-        expectInvalid(source.replace("\"payload\": {", "\"future\":\"" + repeat('u', 1_114_112) + "\",\"payload\":{"));
+        expectInvalid(source.replace("\"payload\": {", "\"future\":\"" + repeat('u', WireLimits.EVENT_BODY_BYTES) + "\",\"payload\":{"));
         ProtocolEvent invalidOutbound = new ProtocolEvent(repeat('e', 129), "device", "android", "epoch", 1,
                 "clipboard.text", 1, null, Collections.singletonMap("text", "opaque"));
         try { BridgeState.fresh("device", "epoch", 4, 4).enqueue(invalidOutbound); throw new AssertionError("invalid outbound accepted"); }
