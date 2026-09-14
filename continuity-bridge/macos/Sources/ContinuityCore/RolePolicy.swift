@@ -10,7 +10,7 @@ public enum RolePolicy {
             throw ProtocolError.identityMismatch
         }
         switch (actor.role, event.kind) {
-        case (.android, .clipboard), (.android, .notification), (.macOS, .clipboard): return
+        case (.android, .clipboard), (.android, .image), (.android, .notification), (.macOS, .clipboard), (.macOS, .image): return
         case (.macOS, .notification): throw ProtocolError.directionForbidden
         }
     }

@@ -1,26 +1,14 @@
 import Foundation
 
 public enum DeviceRole: String, Codable, Sendable { case android, macOS = "macos" }
-public enum EventKind: String, Codable, Sendable { case clipboard = "clipboard.text", notification = "android.notification" }
-
-public struct NotificationPayload: Codable, Equatable, Sendable {
-    public let notificationKey: String
-    public let packageName: String
-    public let appLabel: String
-    public let title: String
-    public let body: String
-
-    public init(notificationKey: String, packageName: String, appLabel: String, title: String, body: String) {
-        self.notificationKey = notificationKey
-        self.packageName = packageName
-        self.appLabel = appLabel
-        self.title = title
-        self.body = body
-    }
+public enum EventKind: String, Codable, Sendable {
+    case clipboard = "clipboard.text", image = "clipboard.image", notification = "android.notification"
+    public var isClipboard: Bool { self == .clipboard || self == .image }
 }
 
 public enum EventPayload: Equatable, Sendable {
     case clipboard(text: String)
+    case image(ImagePayload)
     case notification(NotificationPayload)
 }
 
@@ -58,6 +46,7 @@ public struct BridgeEvent: Codable, Equatable, Sendable {
         self.payload = payload
         switch payload {
         case .clipboard: kind = .clipboard
+        case .image: kind = .image
         case .notification: kind = .notification
         }
     }
@@ -91,6 +80,8 @@ public struct BridgeEvent: Codable, Equatable, Sendable {
             payload = .clipboard(text: content.text)
         case .notification:
             payload = .notification(try values.decode(NotificationPayload.self, forKey: .payload))
+        case .image:
+            payload = .image(try values.decode(ImagePayload.self, forKey: .payload))
         }
         try validate()
     }
@@ -108,6 +99,7 @@ public struct BridgeEvent: Codable, Equatable, Sendable {
         try values.encodeIfPresent(expiresAtMs, forKey: .expiresAtMs)
         switch payload {
         case .clipboard(let text): try values.encode(ClipboardPayload(text: text), forKey: .payload)
+        case .image(let content): try values.encode(content, forKey: .payload)
         case .notification(let content): try values.encode(content, forKey: .payload)
         }
     }
@@ -123,13 +115,8 @@ public struct BridgeEvent: Codable, Equatable, Sendable {
         switch payload {
         case .clipboard(let text):
             guard text.utf8.count <= 1_048_576 else { throw ProtocolError.payloadTooLarge }
-        case .notification(let item):
-            let fields = [(item.notificationKey, 4_096), (item.packageName, 255), (item.appLabel, 4_096),
-                          (item.title, 8_192), (item.body, 65_536)]
-            guard fields.allSatisfy({ valid($0.0, $0.1, true) }),
-                  (try? JSONEncoder().encode(item).count) ?? Int.max <= 81_920 else {
-                throw ProtocolError.payloadTooLarge
-            }
+        case .image(let image): _ = try image.validatedData()
+        case .notification(let item): try item.validate()
         }
     }
 }
@@ -141,7 +128,7 @@ private func valid(_ value: String, _ limit: Int, _ empty: Bool) -> Bool {
 
 public enum EventCodec {
     public static func decode(_ data: Data) throws -> BridgeEvent {
-        guard data.count <= 1_114_112 else { throw ProtocolError.payloadTooLarge }
+        guard data.count <= WireLimits.eventBodyBytes else { throw ProtocolError.payloadTooLarge }
         do { return try StrictJSON.decode(BridgeEvent.self, from: data) }
         catch let error as ProtocolError { throw error }
         catch { throw ProtocolError.malformedEvent }
@@ -149,8 +136,8 @@ public enum EventCodec {
 
     public static func encode(_ event: BridgeEvent) throws -> Data {
         try event.validate()
-        let data = try JSONEncoder().encode(event)
-        guard data.count <= 1_114_112 else { throw ProtocolError.payloadTooLarge }
+        let data = try protocolJSONEncoder().encode(event)
+        guard data.count <= WireLimits.eventBodyBytes else { throw ProtocolError.payloadTooLarge }
         return data
     }
 }

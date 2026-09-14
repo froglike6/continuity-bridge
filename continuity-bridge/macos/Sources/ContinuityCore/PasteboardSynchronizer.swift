@@ -1,36 +1,6 @@
 import AppKit
 import Foundation
-
-public enum PasteboardError: Error, Equatable {
-    case invalidEvent
-    case writeFailed
-    case verificationFailed
-}
-
-@MainActor
-public protocol PasteboardSurface {
-    var changeCount: Int { get }
-    func string(for type: NSPasteboard.PasteboardType) -> String?
-    func replace(text: String, eventId: String) -> Int?
-}
-
-@MainActor
-public final class NSPasteboardSurface: PasteboardSurface {
-    private let pasteboard: NSPasteboard
-
-    public init(_ pasteboard: NSPasteboard) { self.pasteboard = pasteboard }
-    public var changeCount: Int { pasteboard.changeCount }
-    public func string(for type: NSPasteboard.PasteboardType) -> String? {
-        pasteboard.string(forType: type)
-    }
-
-    public func replace(text: String, eventId: String) -> Int? {
-        pasteboard.declareTypes([.string, PasteboardSynchronizer.eventIDType], owner: nil)
-        guard pasteboard.setString(text, forType: .string),
-              pasteboard.setString(eventId, forType: PasteboardSynchronizer.eventIDType) else { return nil }
-        return pasteboard.changeCount
-    }
-}
+import UniformTypeIdentifiers
 
 @MainActor
 public final class PasteboardSynchronizer {
@@ -43,6 +13,7 @@ public final class PasteboardSynchronizer {
     private let afterVerifiedWrite: @MainActor @Sendable () async -> Void
     private var lastObservedChangeCount: Int?
     private var monitorTask: Task<Void, Never>?
+    public private(set) var lastCaptureError: PasteboardError?
 
     public init(surface: PasteboardSurface, state: DurableStateStore,
                 afterVerifiedWrite: @escaping @MainActor @Sendable () async -> Void = {}) {
@@ -57,16 +28,27 @@ public final class PasteboardSynchronizer {
     }
 
     public func apply(_ event: BridgeEvent) async throws {
-        guard event.originRole == .android, case .clipboard(let text) = event.payload else {
+        guard event.originRole == .android, event.kind.isClipboard else {
             throw PasteboardError.invalidEvent
         }
-        try event.validate()
-        try await state.beginPasteboardApply(event)
-        guard let writtenChangeCount = surface.replace(text: text, eventId: event.eventId) else {
-            throw PasteboardError.writeFailed
+        try await Task.detached(priority: .utility) { try event.validate() }.value
+        let writtenChangeCount: Int
+        let contentMatches: Bool
+        switch event.payload {
+        case .clipboard(let text):
+            try await state.beginPasteboardApply(event)
+            guard let count = surface.replace(text: text, eventId: event.eventId) else { throw PasteboardError.writeFailed }
+            writtenChangeCount = count
+            contentMatches = surface.string(for: .string) == text
+        case .image(let image):
+            let data = try await Task.detached(priority: .utility) { try PasteboardImageCodec.validate(image) }.value
+            try await state.beginPasteboardApply(event)
+            guard let count = surface.replace(image: image, data: data, eventId: event.eventId) else { throw PasteboardError.writeFailed }
+            writtenChangeCount = count
+            contentMatches = surface.data(for: NSPasteboardSurface.imageType(image.mimeType)) == data
+        case .notification: throw PasteboardError.invalidEvent
         }
-        guard surface.changeCount == writtenChangeCount,
-              surface.string(for: .string) == text,
+        guard contentMatches, surface.changeCount == writtenChangeCount,
               surface.string(for: Self.eventIDType) == event.eventId else {
             throw PasteboardError.verificationFailed
         }
@@ -85,15 +67,42 @@ public final class PasteboardSynchronizer {
             return nil
         }
         guard current != lastObservedChangeCount || correlation != nil else { return nil }
-        guard let text = surface.string(for: .string) else {
+        let payload: EventPayload?
+        do { payload = try await capturedPayload() }
+        catch let error as PasteboardError {
+            lastCaptureError = error
+            if current == surface.changeCount {
+                if let correlation { try await state.consumePasteboardCorrelation(correlation) }
+                lastObservedChangeCount = current
+            }
+            throw error
+        }
+        guard current == surface.changeCount else { return nil }
+        guard let payload else {
             if let correlation { try await state.consumePasteboardCorrelation(correlation) }
             lastObservedChangeCount = current
+            lastCaptureError = nil
             return nil
         }
-        let event = try await state.enqueueClipboard(text: text, createdAtMs: createdAtMs,
-                                                      replacing: correlation)
+        let event = try await state.enqueueClipboard(payload: payload, createdAtMs: createdAtMs, replacing: correlation)
         lastObservedChangeCount = current
+        lastCaptureError = nil
         return event
+    }
+
+    private func capturedPayload() async throws -> EventPayload? {
+        let formats: [(NSPasteboard.PasteboardType, String)] = [(.png, "image/png"), (.init("public.jpeg"), "image/jpeg"), (.tiff, "image/tiff")]
+        for (type, mimeType) in formats where surface.types.contains(type) {
+            guard let data = surface.data(for: type) else { throw PasteboardError.invalidImage }
+            let image = try await Task.detached(priority: .utility) {
+                try PasteboardImageCodec.capture(data, mimeType: mimeType)
+            }.value
+            return .image(image)
+        }
+        if surface.types.contains(where: { UTType($0.rawValue)?.conforms(to: .image) == true }) {
+            throw PasteboardError.unsupportedImageFormat
+        }
+        return surface.string(for: .string).map { .clipboard(text: $0) }
     }
 
     public func start(intervalMilliseconds: Int = 500,

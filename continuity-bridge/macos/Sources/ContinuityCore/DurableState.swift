@@ -32,6 +32,7 @@ public actor DurableStateStore {
     private let url: URL
     private let appliedLimit: Int
     private static let maximum = Int64(9_007_199_254_740_991)
+    private static let maximumStateBytes = 16_777_216
 
     public static func applicationStateURL(fileManager: FileManager = .default) throws -> URL {
         let base = try fileManager.url(for: .applicationSupportDirectory, in: .userDomainMask,
@@ -43,7 +44,11 @@ public actor DurableStateStore {
         self.url = url
         self.appliedLimit = appliedLimit
         if FileManager.default.fileExists(atPath: url.path) {
-            do { state = try StrictJSON.decode(ClientState.self, from: Data(contentsOf: url)) }
+            do {
+                let size = try url.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0
+                guard size <= Self.maximumStateBytes else { throw DurableStateError.corruptState }
+                state = try StrictJSON.decode(ClientState.self, from: Data(contentsOf: url))
+            }
             catch { throw DurableStateError.corruptState }
             guard Self.valid(state, appliedLimit: appliedLimit) else { throw DurableStateError.corruptState }
         } else {
@@ -59,10 +64,17 @@ public actor DurableStateStore {
     @discardableResult
     public func enqueueClipboard(text: String, createdAtMs: Int64,
                                  replacing correlation: PasteboardCorrelation? = nil) throws -> BridgeEvent {
+        try enqueueClipboard(payload: .clipboard(text: text), createdAtMs: createdAtMs, replacing: correlation)
+    }
+
+    @discardableResult
+    public func enqueueClipboard(payload: EventPayload, createdAtMs: Int64,
+                                 replacing correlation: PasteboardCorrelation? = nil) throws -> BridgeEvent {
         guard state.nextSequence <= Self.maximum else { throw DurableStateError.sequenceExhausted }
         let event = BridgeEvent(eventId: UUID().uuidString.lowercased(), originDeviceId: state.deviceId,
                                 originRole: .macOS, originEpoch: state.originEpoch, sequence: state.nextSequence,
-                                createdAtMs: createdAtMs, payload: .clipboard(text: text))
+                                createdAtMs: createdAtMs, payload: payload)
+        guard event.kind.isClipboard else { throw DurableStateError.corruptState }
         try event.validate()
         try commit { candidate in
             candidate.nextSequence += 1
@@ -86,7 +98,7 @@ public actor DurableStateStore {
 
     public func markPasteboardApplied(_ event: BridgeEvent, changeCount: Int) throws {
         try event.validate()
-        guard event.originRole == .android, event.kind == .clipboard, changeCount >= 0 else {
+        guard event.originRole == .android, event.kind.isClipboard, changeCount >= 0 else {
             throw DurableStateError.corruptState
         }
         try commit { candidate in
@@ -98,7 +110,7 @@ public actor DurableStateStore {
 
     public func beginPasteboardApply(_ event: BridgeEvent) throws {
         try event.validate()
-        guard event.originRole == .android, event.kind == .clipboard else {
+        guard event.originRole == .android, event.kind.isClipboard else {
             throw DurableStateError.corruptState
         }
         try commit { $0.pasteboardCorrelation = PasteboardCorrelation(eventId: event.eventId) }
@@ -160,7 +172,9 @@ public actor DurableStateStore {
         let directory = url.deletingLastPathComponent()
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true,
                                                 attributes: [.posixPermissions: 0o700])
-        try JSONEncoder().encode(value).write(to: url, options: .atomic)
+        let data = try protocolJSONEncoder().encode(value)
+        guard data.count <= maximumStateBytes else { throw DurableStateError.corruptState }
+        try data.write(to: url, options: .atomic)
         try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
     }
 
@@ -185,7 +199,7 @@ public actor DurableStateStore {
         }
         return value.outbox.allSatisfy { event in
             event.originRole == .macOS && event.originDeviceId == value.deviceId &&
-            event.originEpoch == value.originEpoch && event.kind == .clipboard &&
+            event.originEpoch == value.originEpoch && event.kind.isClipboard &&
             event.sequence < value.nextSequence && (try? event.validate()) != nil
         }
     }

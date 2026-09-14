@@ -114,7 +114,7 @@ public struct RemoteEventApplier: Sendable {
 
     public func apply(_ event: BridgeEvent) async throws {
         switch event.payload {
-        case .clipboard:
+        case .clipboard, .image:
             try await pasteboard.apply(event)
         case .notification:
             try await notifications.apply(event)
