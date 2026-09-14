@@ -1,5 +1,5 @@
 import { atomicWrite, cleanupTempFiles, loadState } from "./persistence.mjs";
-import { LIMITS, parseEvent } from "./schema.mjs";
+import { isClipboard, LIMITS, parseEvent } from "./schema.mjs";
 import { destinationFor, emptyState, fingerprint, MAX_REPLAY_ORIGIN_KEYS, prepareState, RECENT_IDENTITY_COUNT } from "./state-model.mjs";
 import { failure, StateError } from "./errors.mjs";
 
@@ -134,8 +134,8 @@ export class DurableStore {
       const cursor = candidate.nextCursor;
       candidate.nextCursor = String(Number(cursor) + 1);
       const destination = destinationFor(event);
-      if (event.kind === "clipboard.text") {
-        candidate.retained = candidate.retained.filter((entry) => !(entry.destination === destination && entry.event.kind === "clipboard.text"));
+      if (isClipboard(event.kind)) {
+        candidate.retained = candidate.retained.filter((entry) => !(entry.event.originDeviceId === event.originDeviceId && isClipboard(entry.event.kind)));
       }
       const bytes = Buffer.byteLength(JSON.stringify(event), "utf8");
       const requestedDeadline = event.expiresAtMs ?? Number.MAX_SAFE_INTEGER;
@@ -160,8 +160,19 @@ export class DurableStore {
       const candidate = structuredClone(this.state);
       const changed = this.prune(candidate);
       if (changed) await this.commit(candidate);
-      return { status: 200, protocolVersion: 1, serverEpoch: this.serverEpoch, after,
-        nextCursor: tailCursor(this.state), events: structuredClone(this.recordsFor(actor.role, after)) };
+      const page = { status: 200, protocolVersion: 1, serverEpoch: this.serverEpoch, after,
+        nextCursor: tailCursor(this.state), events: [] };
+      let length = Buffer.byteLength(JSON.stringify(page), "utf8");
+      for (const entry of this.recordsFor(actor.role, after)) {
+        const entryBytes = Buffer.byteLength(JSON.stringify(entry), "utf8") + (page.events.length ? 1 : 0);
+        if (length + entryBytes > LIMITS.responseBody) {
+          page.nextCursor = page.events.at(-1)?.cursor ?? after;
+          break;
+        }
+        page.events.push(entry);
+        length += entryBytes;
+      }
+      return structuredClone(page);
     });
   }
 

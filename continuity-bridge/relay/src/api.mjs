@@ -4,7 +4,7 @@ import { LIMITS, parseAck, parseEvent, parseQuery } from "./schema.mjs";
 import { parseStrictJson } from "./strict-json.mjs";
 
 const EVENT_ROLES = new Set(["android", "macos"]);
-const EVENT_KINDS = new Set(["clipboard.text", "android.notification"]);
+const EVENT_KINDS = new Set(["clipboard.text", "clipboard.image", "android.notification"]);
 
 function send(response, status, body) {
   if (response.destroyed || response.writableEnded) return;

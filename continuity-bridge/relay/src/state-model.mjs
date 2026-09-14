@@ -4,7 +4,7 @@ import { LIMITS, parseEvent } from "./schema.mjs";
 
 export const MAX_REPLAY_ORIGIN_KEYS = 64;
 export const RECENT_IDENTITY_COUNT = 4_096;
-const MAX_DEDUPE_IDENTITIES = RECENT_IDENTITY_COUNT + LIMITS.notificationCount + 2;
+const MAX_DEDUPE_IDENTITIES = RECENT_IDENTITY_COUNT + LIMITS.notificationCount + MAX_REPLAY_ORIGIN_KEYS;
 
 export function emptyState() {
   return { schemaVersion: 1, serverEpoch: randomBytes(16).toString("hex"), nextCursor: "1",

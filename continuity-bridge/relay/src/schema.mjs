@@ -1,19 +1,15 @@
 import { failure } from "./errors.mjs";
+import { normalizedPayload, parsePayload, PAYLOAD_LIMITS } from "./payload-schema.mjs";
 
-export const LIMITS = Object.freeze({ eventBody: 1_114_112, ackBody: 65_536, clipboard: 1_048_576,
-  notificationPayload: 81_920, notificationBytes: 524_288, notificationCount: 100, notificationTtlMs: 900_000 });
+export const LIMITS = Object.freeze({ eventBody: 12_582_912, responseBody: 12_582_912, ackBody: 65_536, ...PAYLOAD_LIMITS,
+  notificationBytes: 524_288, notificationCount: 100, notificationTtlMs: 900_000 });
 const ROLES = new Set(["android", "macos"]);
-const KINDS = new Set(["clipboard.text", "android.notification"]);
+const KINDS = new Set(["clipboard.text", "clipboard.image", "android.notification"]);
+export const isClipboard = (kind) => kind === "clipboard.text" || kind === "clipboard.image";
 const bytes = (value) => Buffer.byteLength(value, "utf8");
 const isObject = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
 const validString = (value, limit, empty = false) => typeof value === "string" && (empty || value.length > 0) && bytes(value) <= limit;
 const safeInteger = (value, minimum) => Number.isSafeInteger(value) && value >= minimum;
-
-function normalizedPayload(kind, payload) {
-  if (kind === "clipboard.text") return { text: payload.text };
-  return { notificationKey: payload.notificationKey, packageName: payload.packageName,
-    appLabel: payload.appLabel, title: payload.title, body: payload.body };
-}
 
 export function normalizeEvent(event) {
   const normalized = { protocolVersion: event.protocolVersion, eventId: event.eventId,
@@ -37,18 +33,9 @@ export function parseEvent(actor, event) {
     return failure("invalid_event");
   }
   if (actor.role !== event.originRole || actor.deviceId !== event.originDeviceId) return failure("identity_mismatch");
-  if (event.originRole === "macos" && event.kind !== "clipboard.text") return failure("direction_forbidden");
-  if (event.kind === "clipboard.text") {
-    if (typeof event.payload.text !== "string") return failure("invalid_event");
-    if (bytes(event.payload.text) > LIMITS.clipboard) return failure("payload_too_large");
-  } else {
-    const fields = [["notificationKey", 4_096], ["packageName", 255], ["appLabel", 4_096], ["title", 8_192], ["body", 65_536]];
-    for (const [field, limit] of fields) {
-      if (!validString(event.payload[field], limit, true)) return typeof event.payload[field] === "string"
-        ? failure("payload_too_large") : failure("invalid_event");
-    }
-    if (bytes(JSON.stringify(normalizedPayload(event.kind, event.payload))) > LIMITS.notificationPayload) return failure("payload_too_large");
-  }
+  if (event.originRole === "macos" && !isClipboard(event.kind)) return failure("direction_forbidden");
+  const payload = parsePayload(event.kind, event.payload);
+  if (payload.status !== 0) return payload;
   return { status: 0, event: normalizeEvent(event) };
 }
 
