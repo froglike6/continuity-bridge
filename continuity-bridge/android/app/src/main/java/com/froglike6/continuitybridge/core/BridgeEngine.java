@@ -6,7 +6,7 @@ import java.util.List;
 import javax.net.ssl.SSLException;
 
 public final class BridgeEngine {
-    public enum Status { CONNECTED, OUTBOX_READY, PERMISSION_REQUIRED, AUTH_FAILURE, TLS_FAILURE, SECURITY_FAILURE, PROTOCOL_FAILURE, RETRY, STOPPED }
+    public enum Status { CONNECTED, OUTBOX_READY, CLIPBOARD_WAIT, PERMISSION_REQUIRED, AUTH_FAILURE, TLS_FAILURE, SECURITY_FAILURE, PROTOCOL_FAILURE, RETRY, STOPPED }
     public static final class Result {
         private final Status status; private final String errorClass;
         Result(Status status, String errorClass) { this.status = status; this.errorClass = errorClass; }
@@ -74,7 +74,7 @@ public final class BridgeEngine {
                 state = store.load(); ProtocolEvent event = entry.event(); BridgeState.Delivery delivery = state.classify(event);
                 if (delivery == BridgeState.Delivery.STALE || delivery == BridgeState.Delivery.CONFLICT) return result(Status.PROTOCOL_FAILURE, delivery.name());
                 if (delivery == BridgeState.Delivery.NEW) {
-                    if (!applier.apply(event)) return result(owner.owns(lease) ? Status.PERMISSION_REQUIRED : Status.STOPPED, "ApplyUnavailable");
+                    if (!applier.apply(event)) return result(owner.owns(lease) ? Status.CLIPBOARD_WAIT : Status.STOPPED, "ApplyUnavailable");
                     state = store.update(new BridgeStateStore.Mutation() {
                         @Override public BridgeState apply(BridgeState current) { return current.applied(event, entry.cursor()); }
                     });

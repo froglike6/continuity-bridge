@@ -9,7 +9,8 @@ final class UiStatePolicySuite {
         cases += processRunPresenceTracksStopAndRestart();
         cases += permissionDiagnosticRequiresMatchingRecovery();
         for (ConnectionStatus status : ConnectionStatus.values()) {
-            boolean active = status == ConnectionStatus.CONNECTING || status == ConnectionStatus.CONNECTED || status == ConnectionStatus.RETRY;
+            boolean active = status == ConnectionStatus.CONNECTING || status == ConnectionStatus.CONNECTED
+                    || status == ConnectionStatus.CLIPBOARD_WAIT || status == ConnectionStatus.RETRY;
             for (boolean systemTrust : new boolean[] { false, true }) {
                 UiStatePolicy.Decision decision = UiStatePolicy.forStatus(status, systemTrust);
                 check(decision.startEnabled() == !active, status, systemTrust, "start"); cases++;
@@ -48,7 +49,8 @@ final class UiStatePolicySuite {
     private static int persistedRuntimeStatusRequiresLiveServiceRun() {
         int cases = 0;
         for (ConnectionStatus persisted : ConnectionStatus.values()) {
-            boolean requiresRun = persisted == ConnectionStatus.CONNECTING || persisted == ConnectionStatus.CONNECTED || persisted == ConnectionStatus.RETRY;
+            boolean requiresRun = persisted == ConnectionStatus.CONNECTING || persisted == ConnectionStatus.CONNECTED
+                    || persisted == ConnectionStatus.CLIPBOARD_WAIT || persisted == ConnectionStatus.RETRY;
             ConnectionStatus restored = UiStatePolicy.reconcileServiceStatus(persisted, false);
             check(restored == (requiresRun ? ConnectionStatus.STOPPED : persisted), persisted, false,
                     "dead_service_cannot_restore_live_status"); cases++;

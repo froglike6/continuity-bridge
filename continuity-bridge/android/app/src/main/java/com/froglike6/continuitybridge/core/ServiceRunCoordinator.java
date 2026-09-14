@@ -4,7 +4,19 @@ final class ServiceRunCoordinator {
     private static final ServiceRunCoordinator PROCESS = new ServiceRunCoordinator();
 
     static final class Run {
+        private long wakeRevision;
         private Run() { }
+
+        synchronized long wakeRevision() { return wakeRevision; }
+        synchronized void wake() { wakeRevision++; notifyAll(); }
+        synchronized void awaitWake(long observedRevision, long timeoutMs) throws InterruptedException {
+            long deadline = System.nanoTime() + java.util.concurrent.TimeUnit.MILLISECONDS.toNanos(timeoutMs);
+            while (wakeRevision == observedRevision) {
+                long remaining = deadline - System.nanoTime();
+                if (remaining <= 0) return;
+                java.util.concurrent.TimeUnit.NANOSECONDS.timedWait(this, remaining);
+            }
+        }
     }
 
     private Run active;

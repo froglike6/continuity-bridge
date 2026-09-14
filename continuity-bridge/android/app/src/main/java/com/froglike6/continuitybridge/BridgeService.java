@@ -6,6 +6,10 @@ import android.app.NotificationManager;
 import android.app.PendingIntent;
 import android.app.Service;
 import android.content.Intent;
+import android.content.IntentFilter;
+import android.content.BroadcastReceiver;
+import android.content.Context;
+import android.os.Build;
 import android.os.IBinder;
 import java.util.Random;
 
@@ -14,9 +18,20 @@ public final class BridgeService extends Service {
     static final int STATUS_NOTIFICATION_ID = 3103;
     private final ServiceRunCoordinator runs = ServiceRunCoordinator.process();
     private volatile Worker activeWorker;
+    private final BroadcastReceiver unlockReceiver = new BroadcastReceiver() {
+        @Override public void onReceive(Context context, Intent intent) {
+            if (Intent.ACTION_USER_PRESENT.equals(intent.getAction())) {
+                Worker worker = activeWorker;
+                if (worker != null) worker.run.wake();
+            }
+        }
+    };
 
     @Override public void onCreate() {
         super.onCreate(); createChannel(); startForeground(STATUS_NOTIFICATION_ID, notification(ConnectionStatus.DISCONNECTED));
+        IntentFilter filter = new IntentFilter(Intent.ACTION_USER_PRESENT);
+        if (Build.VERSION.SDK_INT >= 33) registerReceiver(unlockReceiver, filter, Context.RECEIVER_NOT_EXPORTED);
+        else registerReceiver(unlockReceiver, filter);
     }
 
     @Override public int onStartCommand(Intent intent, int flags, int startId) {
@@ -30,6 +45,7 @@ public final class BridgeService extends Service {
     }
 
     @Override public void onDestroy() {
+        unregisterReceiver(unlockReceiver);
         Worker worker = activeWorker;
         if (worker != null && runs.cancel(worker.run)) worker.cancel();
         if (activeWorker == worker) activeWorker = null;
@@ -40,6 +56,7 @@ public final class BridgeService extends Service {
 
     private void connectLoop(Worker worker) {
         ConfigStore config = new ConfigStore(this); RetryPolicy retry = new RetryPolicy(1_000, 60_000, new Random()); int attempt = 0;
+        RetryPolicy clipboardRetry = new RetryPolicy(1_000, 30_000, new Random()); int clipboardAttempt = 0;
         try {
             ConnectionOwner owner = new ConnectionOwner(); RelayTransport transport = new RelayTransport(this, config);
             BridgeRepository repository = BridgeRepository.get(this); FileBridgeStateStore state = repository.store();
@@ -53,13 +70,20 @@ public final class BridgeService extends Service {
             }
             BridgeEngine.Status previous = null;
             while (runs.owns(worker.run) && !Thread.currentThread().isInterrupted()) {
+                long wakeRevision = worker.run.wakeRevision();
                 if (ConnectionPresentation.showConnectingBeforeAttempt(previous)
                         && !publishStatus(worker.run, ConnectionStatus.CONNECTING, null)) return;
                 BridgeEngine.Result result = engine.step(lease);
                 if (result.status() == BridgeEngine.Status.OUTBOX_READY) continue;
                 previous = result.status();
                 if (!publishStatus(worker.run, status(previous), result.errorClass())) return;
-                if (result.status() == BridgeEngine.Status.CONNECTED) { attempt = 0; continue; }
+                if (result.status() == BridgeEngine.Status.CONNECTED) { attempt = 0; clipboardAttempt = 0; continue; }
+                if (result.status() == BridgeEngine.Status.CLIPBOARD_WAIT) {
+                    attempt = 0;
+                    try { worker.run.awaitWake(wakeRevision, clipboardRetry.delayMs(clipboardAttempt++)); }
+                    catch (InterruptedException interrupted) { Thread.currentThread().interrupt(); }
+                    continue;
+                }
                 if (result.status() == BridgeEngine.Status.RETRY) { pause(retry.delayMs(attempt++)); continue; }
                 return;
             }
@@ -89,7 +113,7 @@ public final class BridgeService extends Service {
         synchronized boolean attach(BridgeEngine engine, ConnectionOwner.Lease lease, ClipboardCaptureController capture, DurableOutbox outbox, final RelayTransport transport) {
             if (cancelled) { cancelEngine(engine, lease); return false; }
             this.engine = engine; this.lease = lease; this.capture = capture; this.outbox = outbox;
-            enqueueObserver = new Runnable() { @Override public void run() { transport.wakePoll(); } };
+            enqueueObserver = new Runnable() { @Override public void run() { run.wake(); transport.wakePoll(); } };
             outbox.observeEnqueue(enqueueObserver);
             return true;
         }
@@ -106,6 +130,7 @@ public final class BridgeService extends Service {
     private static ConnectionStatus status(BridgeEngine.Status status) {
         switch (status) {
             case CONNECTED: return ConnectionStatus.CONNECTED;
+            case CLIPBOARD_WAIT: return ConnectionStatus.CLIPBOARD_WAIT;
             case PERMISSION_REQUIRED: return ConnectionStatus.PERMISSION_REQUIRED;
             case AUTH_FAILURE: return ConnectionStatus.AUTH_FAILURE;
             case TLS_FAILURE: return ConnectionStatus.TLS_FAILURE;

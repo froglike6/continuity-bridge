@@ -17,7 +17,8 @@ public final class UiStatePolicy {
     }
 
     private static boolean requiresServiceRun(ConnectionStatus status) {
-        return status == ConnectionStatus.CONNECTING || status == ConnectionStatus.CONNECTED || status == ConnectionStatus.RETRY;
+        return status == ConnectionStatus.CONNECTING || status == ConnectionStatus.CONNECTED
+                || status == ConnectionStatus.CLIPBOARD_WAIT || status == ConnectionStatus.RETRY;
     }
 
     public static final class Decision {

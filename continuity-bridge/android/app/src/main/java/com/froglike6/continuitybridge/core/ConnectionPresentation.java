@@ -4,6 +4,6 @@ public final class ConnectionPresentation {
     private ConnectionPresentation() { }
 
     public static boolean showConnectingBeforeAttempt(BridgeEngine.Status previous) {
-        return previous != BridgeEngine.Status.CONNECTED;
+        return previous != BridgeEngine.Status.CONNECTED && previous != BridgeEngine.Status.CLIPBOARD_WAIT;
     }
 }

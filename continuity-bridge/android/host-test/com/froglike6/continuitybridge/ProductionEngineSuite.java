@@ -21,6 +21,7 @@ final class ProductionEngineSuite {
         count += malformedSuccess(fixtures);
         count += cursorApplyAck(fixtures);
         count += fullEpochMetadataWithholdsApplyAndAck(fixtures);
+        count += temporaryClipboardFailureKeepsRunAndSendsNotifications(fixtures);
         count += applyWithholdsAck(fixtures);
         count += unconfirmedClipboardWithholdsAck(fixtures);
         count += restartAroundAck(fixtures);
@@ -37,6 +38,7 @@ final class ProductionEngineSuite {
         count += responseBoundaries(fixtures);
         count += connectionPresentation();
         count += serviceRunOwnership();
+        count += serviceClipboardWaitWakesAndStops();
         count += repeatedServiceRunRace();
         System.out.println("PRODUCTION_ENGINE_OK cases=" + count + " markers=malformed_2xx,cursor_replay,server_epoch_reset,persist_before_ack,ack_after_apply,apply_failure_withholds_ack,epoch_metadata_full_withholds_apply_ack,restart_before_ack,restart_after_ack,outbox_idempotent,producer_during_publish_preserved,producer_between_publish_load_save_preserved,producer_during_initial_epoch_preserved,401_terminal,403_terminal_Http403,timeout_retry,corrupt_token_terminal,corrupt_state_terminal,stop_long_poll,persistence_interruption_recovery,response_bounds,expires_roundtrip,service_run_ownership,service_run_race_100");
         return count;
@@ -47,7 +49,44 @@ final class ProductionEngineSuite {
                 "connected status overwritten before next long poll");
         check(ConnectionPresentation.showConnectingBeforeAttempt(BridgeEngine.Status.RETRY),
                 "retry did not return to connecting state");
-        return 2;
+        check(!ConnectionPresentation.showConnectingBeforeAttempt(BridgeEngine.Status.CLIPBOARD_WAIT),
+                "clipboard wait was overwritten with connecting");
+        return 3;
+    }
+
+    private static int serviceClipboardWaitWakesAndStops() throws Exception {
+        ServiceRunCoordinator coordinator = new ServiceRunCoordinator();
+        ServiceRunCoordinator.Run run = coordinator.start();
+        long beforeWake = run.wakeRevision();
+        run.wake();
+        Thread earlyWake = new Thread(() -> {
+            try { run.awaitWake(beforeWake, 30_000); }
+            catch (InterruptedException error) { Thread.currentThread().interrupt(); }
+        }, "clipboard-wake-before-wait");
+        earlyWake.start(); earlyWake.join(1_000);
+        boolean earlyFinished = !earlyWake.isAlive();
+        earlyWake.interrupt(); earlyWake.join(1_000);
+        check(earlyFinished, "outbox/unlock wake before retry wait was lost");
+        for (boolean stop : new boolean[] {false, true}) {
+            long revision = run.wakeRevision();
+            CountDownLatch entered = new CountDownLatch(1), finished = new CountDownLatch(1);
+            Thread waiter = new Thread(() -> {
+                entered.countDown();
+                try { run.awaitWake(revision, 30_000); }
+                catch (InterruptedException error) { Thread.currentThread().interrupt(); }
+                finally { finished.countDown(); }
+            }, "clipboard-retry-wait");
+            waiter.start();
+            try {
+                check(entered.await(1, TimeUnit.SECONDS), "clipboard waiter did not start");
+                check(!finished.await(50, TimeUnit.MILLISECONDS), "clipboard retry busy-spun without a wake");
+                if (stop) { coordinator.cancel(run); waiter.interrupt(); }
+                else run.wake();
+                check(finished.await(1, TimeUnit.SECONDS), "clipboard wait ignored " + (stop ? "Stop" : "outbox/unlock"));
+            } finally { waiter.interrupt(); waiter.join(1_000); }
+        }
+        check(!coordinator.owns(run), "stopped clipboard wait retained service run");
+        return 8;
     }
 
     private static int serviceRunOwnership() {
@@ -141,9 +180,39 @@ final class ProductionEngineSuite {
         ProtocolEvent event = EventCodec.decode(fixtures.resolve("macos-clipboard.json"));
         Harness harness = Harness.create(fixtures, eventFetch(fetch("0", "2", "2", event)));
         BridgeEngine.Result result = harness.engine.step(harness.lease);
-        check(result.status() == BridgeEngine.Status.PERMISSION_REQUIRED, "apply failure did not surface permission");
+        check(result.status() == BridgeEngine.Status.CLIPBOARD_WAIT, "apply failure did not enter recoverable wait");
         check(harness.transport.acked.isEmpty() && "0".equals(harness.store.load().cursor()), "failed apply acked or advanced cursor");
         return 2;
+    }
+
+    private static int temporaryClipboardFailureKeepsRunAndSendsNotifications(Path fixtures) throws Exception {
+        ProtocolEvent incoming = EventCodec.decode(fixtures.resolve("macos-clipboard.json"));
+        ProtocolEvent notification = EventCodec.decode(fixtures.resolve("android-notification.json"));
+        Harness harness = Harness.create(fixtures, eventFetch(fetch("0", "2", "2", incoming)));
+        BridgeState initial = harness.store.load();
+        ProtocolEvent outgoing = new ProtocolEvent(notification.eventId(), initial.deviceId(), "android", initial.epoch(),
+                initial.nextSequence(), notification.kind(), notification.createdAtMs(), notification.expiresAtMs(), notification.payload());
+        BridgeEngine.Result waiting = harness.engine.step(harness.lease);
+        check("CLIPBOARD_WAIT".equals(waiting.status().name()), "temporary clipboard failure terminated the run: " + waiting.status());
+        check(harness.owner.owns(harness.lease) && !harness.transport.cancelled, "clipboard wait cancelled connection ownership");
+        check(harness.transport.acked.isEmpty() && "0".equals(harness.store.load().cursor()), "clipboard wait advanced unconfirmed delivery");
+        harness.store.save(harness.store.load().enqueue(outgoing));
+        harness.transport.publish.add(new TransportResponse(201, publishBody(outgoing.eventId())));
+        harness.transport.poll.add(new TransportResponse(200, fetch("0", "2", "2", incoming)));
+        check("CLIPBOARD_WAIT".equals(harness.engine.step(harness.lease).status().name()), "second unavailable apply ended wait");
+        check(harness.store.load().outbox().isEmpty() && harness.transport.published.size() == 1, "clipboard wait blocked outbound notification");
+        check(harness.transport.acked.isEmpty() && "0".equals(harness.store.load().cursor()), "notification publish acknowledged unavailable clipboard");
+        harness.applier.succeed = true;
+        harness.transport.poll.add(new TransportResponse(200, fetch("0", "2", "2", incoming)));
+        harness.transport.ack.add(new TransportResponse(200, ackBody(incoming.eventId())));
+        check(harness.engine.step(harness.lease).status() == BridgeEngine.Status.CONNECTED, "clipboard did not recover in the same run");
+        check(harness.applier.applied.equals(Collections.singletonList(incoming.eventId()))
+                && harness.transport.acked.equals(Collections.singletonList(incoming.eventId()))
+                && "2".equals(harness.store.load().cursor()), "recovery did not apply and acknowledge exactly once");
+        harness.engine.cancel(harness.lease);
+        check(harness.engine.step(harness.lease).status() == BridgeEngine.Status.STOPPED && harness.transport.cancelled,
+                "user Stop did not cancel recovered run");
+        return 9;
     }
 
     private static int restartAroundAck(Path fixtures) throws Exception {
@@ -181,7 +250,7 @@ final class ProductionEngineSuite {
         BridgeEngine.Result result = engine.step(harness.lease);
         BridgeState state = harness.store.load();
         // Then: retain only the echo-suppression intent, never a completed application or ACK.
-        check(result.status() == BridgeEngine.Status.PERMISSION_REQUIRED && harness.transport.acked.isEmpty()
+        check(result.status() == BridgeEngine.Status.CLIPBOARD_WAIT && harness.transport.acked.isEmpty()
                         && state.appliedIds().isEmpty() && state.pendingAcks().isEmpty() && "0".equals(state.cursor())
                         && event.eventId().equals(state.remoteApplyId()),
                 "unverified clipboard application advanced delivery or lost durable remote intent");
@@ -281,6 +350,19 @@ final class ProductionEngineSuite {
         Harness forbidden = Harness.create(fixtures, eventFetch("{}")); forbidden.transport.poll.clear(); forbidden.transport.poll.add(new TransportResponse(403, "{}"));
         BridgeEngine.Result forbiddenResult = forbidden.engine.step(forbidden.lease);
         check(forbiddenResult.status() == BridgeEngine.Status.AUTH_FAILURE && "Http403".equals(forbiddenResult.errorClass()), "403 not terminal auth");
+        for (int code : new int[] { 301, 302, 303, 307, 308 }) {
+            Harness redirected = Harness.create(fixtures, eventFetch("{}"));
+            redirected.transport.poll.clear();
+            redirected.transport.poll.add(new TransportResponse(code, "<html>login</html>"));
+            BridgeEngine.Result result = redirected.engine.step(redirected.lease);
+            check(result.status() == BridgeEngine.Status.AUTH_FAILURE && ("Http" + code).equals(result.errorClass()), "redirect not terminal auth");
+        }
+        Harness accessMissing = Harness.create(fixtures, eventFetch("{}"));
+        accessMissing.transport.pollError = new AccessAuthenticationException();
+        check(accessMissing.engine.step(accessMissing.lease).status() == BridgeEngine.Status.AUTH_FAILURE, "missing Access not terminal auth");
+        Harness accessCorrupt = Harness.create(fixtures, eventFetch("{}"));
+        accessCorrupt.transport.pollError = new SecureStoreException("secure_access_unavailable");
+        check(accessCorrupt.engine.step(accessCorrupt.lease).status() == BridgeEngine.Status.SECURITY_FAILURE, "corrupt Access not terminal security");
         Harness timeout = Harness.create(fixtures, eventFetch("{}")); timeout.transport.pollError = new java.net.SocketTimeoutException("timeout");
         check(timeout.engine.step(timeout.lease).status() == BridgeEngine.Status.RETRY, "timeout not retryable");
         Path directory = Files.createTempDirectory("corrupt-engine-state-");
@@ -350,19 +432,6 @@ final class ProductionEngineSuite {
         expectInvalid(source.replace("\"expiresAtMs\": 1700000900200", "\"expiresAtMs\": 1"));
         String oversizedNotification = source.replace("fixture-notification-key", repeat('k', 4096)).replace("com.example.harmlessfixture", repeat('p', 255))
                 .replace("Harmless Fixture", repeat('a', 4096)).replace("Fixture title", repeat('t', 8192)).replace("Fixture body", repeat('b', 65536));
-        for (int code : new int[] { 301, 302, 303, 307, 308 }) {
-            Harness redirected = Harness.create(fixtures, eventFetch("{}"));
-            redirected.transport.poll.clear();
-            redirected.transport.poll.add(new TransportResponse(code, "<html>login</html>"));
-            BridgeEngine.Result result = redirected.engine.step(redirected.lease);
-            check(result.status() == BridgeEngine.Status.AUTH_FAILURE && ("Http" + code).equals(result.errorClass()), "redirect not terminal auth");
-        }
-        Harness accessMissing = Harness.create(fixtures, eventFetch("{}"));
-        accessMissing.transport.pollError = new AccessAuthenticationException();
-        check(accessMissing.engine.step(accessMissing.lease).status() == BridgeEngine.Status.AUTH_FAILURE, "missing Access not terminal auth");
-        Harness accessCorrupt = Harness.create(fixtures, eventFetch("{}"));
-        accessCorrupt.transport.pollError = new SecureStoreException("secure_access_unavailable");
-        check(accessCorrupt.engine.step(accessCorrupt.lease).status() == BridgeEngine.Status.SECURITY_FAILURE, "corrupt Access not terminal security");
         expectInvalid(oversizedNotification);
         expectInvalid(source.replace("\"payload\": {", "\"future\":\"" + repeat('u', 1_114_112) + "\",\"payload\":{"));
         ProtocolEvent invalidOutbound = new ProtocolEvent(repeat('e', 129), "device", "android", "epoch", 1,
