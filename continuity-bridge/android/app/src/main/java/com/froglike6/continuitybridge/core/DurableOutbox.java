@@ -38,10 +38,19 @@ final class DurableOutbox {
 
     CaptureResult captureClipboard(String text, String marker, String observationIdentity, long nowMs) {
         if (text == null || Utf8.size(text) > 1_048_576) return CaptureResult.INVALID;
+        return captureContent(ClipboardContent.text(text), marker, observationIdentity, nowMs);
+    }
+
+    CaptureResult captureContent(ClipboardContent content, String marker, String observationIdentity, long nowMs) {
+        return captureContent(content, marker, observationIdentity, nowMs, RemoteApplyTracker.observe(marker, observationIdentity));
+    }
+
+    CaptureResult captureContent(ClipboardContent content, String marker, String observationIdentity, long nowMs,
+                                 RemoteApplyTracker.Observation observation) {
+        RemoteApplyTracker.confirmContent(marker, content, observationIdentity);
         synchronized (store) {
             try {
                 BridgeState state = store.load();
-                RemoteApplyTracker.confirm(marker, text, observationIdentity);
                 boolean knownMarker = marker != null && (marker.equals(state.remoteApplyId())
                         || state.appliedIds().contains(marker) || RemoteApplyTracker.matches(marker));
                 String boundObservation = marker == null ? null : RemoteApplyTracker.observationIdentity(marker);
@@ -51,11 +60,17 @@ final class DurableOutbox {
                         && boundObservation.startsWith("timestamp:") && observationIdentity.startsWith("timestamp:")
                         && !boundObservation.equals(observationIdentity);
                 boolean remoteMarker = knownMarker && !distinctStableObservation
-                        && (!RemoteApplyTracker.matches(marker) || RemoteApplyTracker.matchesText(text));
+                        && (!RemoteApplyTracker.matches(marker) || RemoteApplyTracker.matchesContent(content));
                 boolean durableObservation = state.remoteApplyObservationIdentity() != null
                         && state.remoteApplyObservationIdentity().equals(observationIdentity);
-                boolean remoteObservation = marker == null && RemoteApplyTracker.matchesText(text) && (durableObservation
+                boolean remoteObservation = marker == null && RemoteApplyTracker.matchesContent(content) && (durableObservation
                         || RemoteApplyTracker.matchesObservation(observationIdentity));
+                if (observation != null && observation.matches(content) && !distinctStableObservation) {
+                    if (observation.eventId.equals(state.remoteApplyId()) && state.remoteApplyObservationIdentity() == null)
+                        store.save(state.markRemoteApply(observation.eventId, observationIdentity));
+                    observations.accept(observationIdentity, nowMs);
+                    return CaptureResult.REMOTE_SKIPPED;
+                }
                 if (remoteMarker) {
                     boolean bound = RemoteApplyTracker.bindObservation(marker, observationIdentity);
                     if (bound && marker.equals(state.remoteApplyId()) && state.remoteApplyObservationIdentity() == null) {
@@ -71,10 +86,10 @@ final class DurableOutbox {
                 }
                 if (!observations.canAccept(observationIdentity, nowMs)) return CaptureResult.DUPLICATE;
                 if (state.remoteApplyId() != null) state = state.clearRemoteApply(state.remoteApplyId());
-                ProtocolEvent event = state.clipboardEvent(ids.next(), nowMs, text);
+                ProtocolEvent event = state.clipboardEvent(ids.next(), nowMs, content);
                 store.save(state.enqueue(event, nowMs));
                 observations.accept(observationIdentity, nowMs);
-                String pending = RemoteApplyTracker.pendingEventId();
+                String pending = observation == null ? null : observation.eventId;
                 if (pending != null) RemoteApplyTracker.clear(pending);
             } catch (IOException | RuntimeException error) { return CaptureResult.UNAVAILABLE; }
         }

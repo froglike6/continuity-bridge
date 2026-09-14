@@ -71,8 +71,8 @@ public final class BridgeState {
             throw new IllegalArgumentException("outbound_identity_mismatch");
         }
         List<ProtocolEvent> next = new ArrayList<>(outbox);
-        if ("clipboard.text".equals(event.kind())) {
-            for (int index = next.size() - 1; index >= 0; index--) if ("clipboard.text".equals(next.get(index).kind())) next.remove(index);
+        if (isClipboard(event)) {
+            for (int index = next.size() - 1; index >= 0; index--) if (isClipboard(next.get(index))) next.remove(index);
         }
         next.add(event);
         for (int index = next.size() - 1; index >= 0; index--) {
@@ -90,6 +90,14 @@ public final class BridgeState {
     public ProtocolEvent clipboardEvent(String eventId, long createdAtMs, String text) {
         Map<String, String> payload = new LinkedHashMap<>(); payload.put("text", text);
         return new ProtocolEvent(eventId, deviceId, "android", epoch, nextSequence, "clipboard.text", createdAtMs, null, payload);
+    }
+
+    ProtocolEvent clipboardEvent(String eventId, long createdAtMs, ClipboardContent content) {
+        return new ProtocolEvent(eventId, deviceId, "android", epoch, nextSequence, content.kind(), createdAtMs, null, content.payload());
+    }
+
+    private static boolean isClipboard(ProtocolEvent event) {
+        return "clipboard.text".equals(event.kind()) || "clipboard.image".equals(event.kind());
     }
 
     private static int notificationCount(List<ProtocolEvent> events) {

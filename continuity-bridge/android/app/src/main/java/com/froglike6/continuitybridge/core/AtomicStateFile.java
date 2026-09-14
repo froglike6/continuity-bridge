@@ -18,8 +18,8 @@ import java.util.List;
 import java.util.Map;
 
 public final class AtomicStateFile {
-    private static final int MAX_PLAINTEXT_BYTES = 4_000_000;
-    private static final int MAX_ENVELOPE_BYTES = 4_000_064;
+    private static final int MAX_PLAINTEXT_BYTES = 25_165_824;
+    private static final int MAX_ENVELOPE_BYTES = MAX_PLAINTEXT_BYTES + 64;
     public enum Fault { NONE, BEFORE_REPLACE }
     private final Path path;
     private final Fault fault;

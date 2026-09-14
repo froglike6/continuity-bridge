@@ -18,6 +18,7 @@ printf '%s\n' "$ANDROID_DIR/app/src/main/java/com/froglike6/continuitybridge/Tok
 "$JAVA_HOME/bin/java" -ea -cp "$BUILD/classes" com.froglike6.continuitybridge.HostSuite "$ROOT/continuity-bridge/protocol/fixtures" "$ROOT/continuity-bridge/runtime/tls"
 "$JAVA_HOME/bin/java" -ea -cp "$BUILD/classes" com.froglike6.continuitybridge.AdapterHostSuite
 "$JAVA_HOME/bin/java" -ea -cp "$BUILD/classes" com.froglike6.continuitybridge.RichProtocolSuite
+"$JAVA_HOME/bin/java" -ea -cp "$BUILD/classes" com.froglike6.continuitybridge.ImageClipboardSuite
 STATE_TMP=$(mktemp -d "${TMPDIR:-/tmp}/continuity-state-test.XXXXXX")
 trap 'rm -rf "$STATE_TMP"' EXIT INT TERM
 "$JAVA_HOME/bin/java" -ea -cp "$BUILD/classes" com.froglike6.continuitybridge.StateEncryptionSuite "$STATE_TMP"

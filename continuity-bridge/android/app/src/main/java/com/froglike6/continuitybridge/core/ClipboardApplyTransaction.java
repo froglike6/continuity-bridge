@@ -7,10 +7,10 @@ final class ClipboardApplyTransaction {
     private final ClipboardSurface surface;
     ClipboardApplyTransaction(BridgeStateStore store, ClipboardSurface surface) { this.store = store; this.surface = surface; }
     boolean apply(ProtocolEvent event) {
-        if (!"clipboard.text".equals(event.kind())) return false;
-        String text = event.payload().get("text");
-        if (text == null || Utf8.size(text) > 1_048_576) return false;
-        RemoteApplyTracker.begin(event.eventId(), text);
+        final ClipboardContent content;
+        try { content = ClipboardContent.fromEvent(event); }
+        catch (IllegalArgumentException invalid) { return false; }
+        RemoteApplyTracker.beginContent(event.eventId(), content);
         try {
             store.update(new BridgeStateStore.Mutation() {
                 @Override public BridgeState apply(BridgeState state) {
@@ -18,7 +18,7 @@ final class ClipboardApplyTransaction {
                             ? state.remoteApplyObservationIdentity() : null);
                 }
             });
-            if (!surface.set(event.eventId(), text) || !surface.confirm(event.eventId(), text)) return false;
+            if (!surface.setContent(event.eventId(), content) || !surface.confirmContent(event.eventId(), content)) return false;
             synchronized (store) {
                 store.save(store.load().markRemoteApply(event.eventId(),
                         RemoteApplyTracker.observationIdentity(event.eventId())));
