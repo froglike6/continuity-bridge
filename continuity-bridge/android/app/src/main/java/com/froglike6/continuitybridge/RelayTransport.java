@@ -27,6 +27,7 @@ final class RelayTransport implements BridgeTransport {
     private final AccessCredentials.Provider accessCredentials;
     private Request active;
     private boolean pollWakePending;
+    private boolean hasSuccessfulPoll;
     private volatile boolean cancelled;
 
     RelayTransport(Context context, final ConfigStore config) {
@@ -54,7 +55,11 @@ final class RelayTransport implements BridgeTransport {
     }
 
     @Override public TransportResponse poll(String token, String cursor) throws Exception {
-        return request(token, "GET", "/v1/events?after=" + cursor + "&waitMs=25000", null);
+        int waitMs = hasSuccessfulPoll ? 25_000 : 0;
+        hasSuccessfulPoll = false;
+        TransportResponse response = request(token, "GET", "/v1/events?after=" + cursor + "&waitMs=" + waitMs, null);
+        hasSuccessfulPoll = response.status() == 200;
+        return response;
     }
     @Override public TransportResponse publish(String token, ProtocolEvent event) throws Exception { return request(token, "POST", "/v1/events", EventCodec.encode(event)); }
     @Override public TransportResponse acknowledge(String token, String deviceId, java.util.List<String> eventIds) throws Exception {

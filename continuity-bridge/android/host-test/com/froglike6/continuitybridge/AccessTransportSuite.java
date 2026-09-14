@@ -17,11 +17,36 @@ public final class AccessTransportSuite {
     static int run() throws Exception {
         headersForEveryRequest(true);
         headersForEveryRequest(false);
+        firstPollAndReconnectDoNotWaitForNewEvents();
         missingOrCorruptCredentialsFailBeforeConnection(false);
         missingOrCorruptCredentialsFailBeforeConnection(true);
         for (int code : new int[] { 301, 302, 303, 307, 308, 401, 403 }) terminalResponse(code);
         System.out.println("ACCESS_TRANSPORT_OK cases=" + cases);
         return cases;
+    }
+
+    private static void firstPollAndReconnectDoNotWaitForNewEvents() throws Exception {
+        // Given an authenticated transport with no pending remote events.
+        Factory factory = new Factory(200);
+        RelayTransport transport = transport(false, factory, new AccessCredentials.Provider() {
+            @Override public AccessCredentials loadAccess() { return null; }
+        });
+        // When the first fetch establishes the connection.
+        transport.poll("relay-token", "7");
+        // Then it responds immediately while retaining the persisted cursor.
+        check("after=7&waitMs=0".equals(factory.connection.getURL().getQuery()), "initial connection must not wait25s for an event");
+        transport.poll("relay-token", "7");
+        check("after=7&waitMs=25000".equals(factory.connection.getURL().getQuery()), "established connection retains long polling");
+        factory.code = 503;
+        transport.poll("relay-token", "7");
+        factory.code = 200;
+        transport.poll("relay-token", "7");
+        check("after=7&waitMs=0".equals(factory.connection.getURL().getQuery()), "reconnection must not wait for a new event");
+        transport.wakePoll();
+        try { transport.poll("relay-token", "7"); throw new AssertionError("pending wake was ignored"); }
+        catch (PollWakeException expected) { }
+        transport.poll("relay-token", "7");
+        check("after=7&waitMs=0".equals(factory.connection.getURL().getQuery()), "interrupted handshake is rechecked immediately");
     }
 
     private static void headersForEveryRequest(final boolean enabled) throws Exception {
