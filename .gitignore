@@ -20,6 +20,15 @@ continuity-bridge/macos/dist/
 continuity-bridge/relay/continuity-bridge-relay-source.tar.gz
 continuity-bridge/runtime/
 
+# Local environment overrides and private diagnostic notes
+.env
+.env.*
+!.env.example
+!.env.sample
+auth.json
+*-key.pem
+.debug-journal.md
+
 # Signing material must never enter the repository
 *.jks
 *.keystore
