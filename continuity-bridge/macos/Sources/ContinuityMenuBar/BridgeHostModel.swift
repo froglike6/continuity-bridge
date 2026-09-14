@@ -9,9 +9,8 @@ final class BridgeHostModel: ObservableObject {
 
     static var hasSavedLaunchConfiguration: Bool {
         let defaults = UserDefaults.standard
-        guard let endpoint = defaults.string(forKey: "relayEndpoint"), !endpoint.isEmpty,
-              let pin = defaults.string(forKey: "leafPin"), !pin.isEmpty else { return false }
-        return true
+        return LaunchIntent.hasSavedConfiguration(endpoint: defaults.string(forKey: "relayEndpoint"),
+                                                   pin: defaults.string(forKey: "leafPin"))
     }
 
     @Published var status: ConnectionStatus = .stopped

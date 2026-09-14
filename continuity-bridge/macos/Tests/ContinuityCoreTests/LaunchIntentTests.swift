@@ -2,6 +2,15 @@ import XCTest
 @testable import ContinuityCore
 
 final class LaunchIntentTests: XCTestCase {
+    func testSavedPublicEndpoint_withEmptyPinAllowsSystemTrustLaunch() {
+        XCTAssertTrue(LaunchIntent.hasSavedConfiguration(endpoint: "https://bridge.example.com", pin: ""))
+        XCTAssertTrue(LaunchIntent.hasSavedConfiguration(endpoint: "https://localhost:8443", pin: String(repeating: "a", count: 64)))
+        XCTAssertFalse(LaunchIntent.hasSavedConfiguration(endpoint: nil, pin: ""))
+        XCTAssertFalse(LaunchIntent.hasSavedConfiguration(endpoint: "https://bridge.example.com", pin: nil))
+        XCTAssertFalse(LaunchIntent.hasSavedConfiguration(endpoint: "http://bridge.example.com", pin: ""))
+        XCTAssertFalse(LaunchIntent.hasSavedConfiguration(endpoint: "https://bridge.example.com", pin: "invalid"))
+    }
+
     func testLaunchIntent_whenNormalOrUnknownArguments_staysStopped() {
         XCTAssertEqual(LaunchIntent.resolve(arguments: ["ContinuityBridge"]), .stopped)
         XCTAssertEqual(LaunchIntent.resolve(arguments: ["ContinuityBridge", "--unknown"]), .stopped)
