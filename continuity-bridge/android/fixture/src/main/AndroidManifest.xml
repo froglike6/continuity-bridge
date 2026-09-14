@@ -1,7 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.froglike6.continuityfixture">
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
-    <application android:allowBackup="false" android:label="Continuity Fixture" android:theme="@android:style/Theme.Material.Settings">
+    <application android:allowBackup="false" android:label="Bridge Test Chat" android:icon="@drawable/ic_fixture_chat" android:theme="@android:style/Theme.Material.Settings">
+        <receiver android:name=".NotificationFixtureReceiver" android:exported="true" />
         <activity android:name=".FixtureActivity" android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />

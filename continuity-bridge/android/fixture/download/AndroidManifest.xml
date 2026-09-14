@@ -1,0 +1,12 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.froglike6.continuityfixture.downloads">
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <application android:allowBackup="false" android:label="Bridge Test Downloads" android:icon="@drawable/ic_fixture_download" android:theme="@android:style/Theme.Material.Settings">
+        <receiver android:name="com.froglike6.continuityfixture.NotificationFixtureReceiver" android:exported="true" />
+        <activity android:name="com.froglike6.continuityfixture.FixtureActivity" android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+    </application>
+</manifest>

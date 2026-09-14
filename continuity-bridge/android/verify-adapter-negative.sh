@@ -41,7 +41,7 @@ test "$CLIP_EXIT" -ne 0; grep -Fq 'SERVICE_WIRING_MISSING=ClipboardCaptureContro
 echo "NEGATIVE_CLIPBOARD_WIRING_EXIT=$CLIP_EXIT marker=SERVICE_WIRING_MISSING"
 
 cp "$ANDROID_DIR/app/src/main/java/com/froglike6/continuitybridge/BridgeService.java" "$MUTANT/app/src/main/java/com/froglike6/continuitybridge/BridgeService.java"
-perl -0pi -e 's/BridgeRepository\.get\(this\)\.outbox\(\)\.enqueueNotification\(fields, System\.currentTimeMillis\(\)\)/disabled(fields)/; s/private static String value/private boolean disabled(NotificationFields fields) throws IOException { return false; }\n\n    private static String value/' "$MUTANT/app/src/main/java/com/froglike6/continuitybridge/NotificationMirrorService.java"
+perl -0pi -e 's/BridgeRepository\.get\(this\)\.outbox\(\)\.enqueueNotification\(fields, System\.currentTimeMillis\(\)\)/disabled(fields)/; s/(final class NotificationMirrorService[^\{]*\{)/$1\n    private boolean disabled(NotificationFields fields) throws IOException { return false; }/' "$MUTANT/app/src/main/java/com/froglike6/continuitybridge/NotificationMirrorService.java"
 set +e; "$MUTANT/build.sh" > "$TEMP/notification-bypass.txt" 2>&1; NOTE_EXIT=$?; set -e
 test "$NOTE_EXIT" -ne 0
 if ! grep -Fq 'MIRROR_WIRING_MISSING=enqueueNotification' "$TEMP/notification-bypass.txt"; then cat "$TEMP/notification-bypass.txt" >&2; exit 1; fi
@@ -95,7 +95,10 @@ run_fixture_resource_mutation() {
     mkdir -p "$TEMP/resource-$NAME/continuity-bridge"
     cp -R "$ANDROID_DIR" "$RESOURCE_MUTANT"
     mkdir -p "$(dirname "$RESOURCE_MUTANT/fixture/src/main/$RELATIVE")"
-    printf '%s\n' 'fixture boundary probe' > "$RESOURCE_MUTANT/fixture/src/main/$RELATIVE"
+    case "$RELATIVE" in
+        *.xml) printf '%s\n' '<fixture-boundary-probe />' > "$RESOURCE_MUTANT/fixture/src/main/$RELATIVE" ;;
+        *) printf '%s\n' 'fixture boundary probe' > "$RESOURCE_MUTANT/fixture/src/main/$RELATIVE" ;;
+    esac
     set +e
     "$RESOURCE_MUTANT/build-fixture.sh" > "$TEMP/resource-$NAME.txt" 2>&1
     RESOURCE_EXIT=$?
