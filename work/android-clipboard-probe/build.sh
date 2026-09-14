@@ -8,7 +8,7 @@ JAVA_HOME="/Applications/Android Studio.app/Contents/jbr/Contents/Home"
 export JAVA_HOME
 JAVAC="$JAVA_HOME/bin/javac"
 ZIP=/usr/bin/zip
-KEYSTORE=$HOME/.android/debug.keystore
+KEYSTORE="${CONTINUITY_DEBUG_KEYSTORE:-${KEYSTORE:-$HOME/.android/debug.keystore}}"
 
 AAPT2="$TOOLS_DIR/aapt2"
 D8="$TOOLS_DIR/d8"
