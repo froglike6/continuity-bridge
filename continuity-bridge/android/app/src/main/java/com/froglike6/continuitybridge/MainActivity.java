@@ -3,6 +3,7 @@ package com.froglike6.continuitybridge;
 import android.Manifest;
 import android.app.Activity;
 import android.app.AlertDialog;
+import android.app.NotificationChannel;
 import android.app.NotificationManager;
 import android.content.ComponentName;
 import android.content.Intent;
@@ -32,13 +33,13 @@ import android.widget.TextView;
 import java.util.Locale;
 
 public final class MainActivity extends Activity {
-    private static final int NOTIFICATION_PERMISSION_REQUEST = 10;
     private TextView status;
     private TextView helper;
     private TextView actionFeedback;
     private TextView clipboardReadiness;
     private TextView listenerReadiness;
     private TextView deliveryReadiness;
+    private TextView notificationReadiness;
     private TextView helperReadiness;
     private TextView credentialHelper;
     private TextView configurationHelper;
@@ -131,6 +132,11 @@ public final class MainActivity extends Activity {
         listener.setOnClickListener(new View.OnClickListener() { @Override public void onClick(View view) {
             startActivity(new Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS));
         }});
+        divider(permissionsGroup);
+        notificationReadiness = readiness(permissionsGroup, "연결 상태 알림 · 선택 사항");
+        caption(permissionsGroup, "알림을 꺼도 공유는 계속됩니다.\nAndroid의 ‘실행 중인 앱’ 표시는 남을\u00a0수\u00a0있습니다.");
+        Button notifications = permissionButton(permissionsGroup, "연결 알림 숨기기·표시");
+        notifications.setOnClickListener(new View.OnClickListener() { @Override public void onClick(View view) { openNotificationPermission(); } });
         divider(permissionsGroup);
         helperReadiness = readiness(permissionsGroup, "클립보드 도우미");
         helperReadiness.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE);
@@ -245,17 +251,6 @@ public final class MainActivity extends Activity {
 
     @Override protected void onResume() { super.onResume(); refresh(); }
 
-    @Override public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
-        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
-        boolean notificationRequest = requestCode == NOTIFICATION_PERMISSION_REQUEST && permissions.length == 1
-                && Manifest.permission.POST_NOTIFICATIONS.equals(permissions[0]);
-        boolean granted = grantResults.length == 1 && grantResults[0] == PackageManager.PERMISSION_GRANTED;
-        ConnectionStatus current = config.status();
-        ConnectionStatus reconciled = UiStatePolicy.afterPermissionResult(current, notificationRequest, granted);
-        if (reconciled != current) config.status(reconciled);
-        refresh();
-    }
-
     @Override protected void onStart() {
         super.onStart(); config.observe(statusObserver); clipboardHelper.addObserver(helperObserver); refresh();
     }
@@ -271,9 +266,6 @@ public final class MainActivity extends Activity {
             return;
         }
         try {
-            if (android.os.Build.VERSION.SDK_INT >= 33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
-                config.status(ConnectionStatus.PERMISSION_REQUIRED); requestPermissions(new String[] { Manifest.permission.POST_NOTIFICATIONS }, NOTIFICATION_PERMISSION_REQUEST); refresh(); return;
-            }
             startForegroundService(new Intent(this, BridgeService.class));
             showFeedback(actionFeedback, "설정을 저장했습니다. 연결 상태를 확인하고 있습니다.");
             refresh();
@@ -382,9 +374,7 @@ public final class MainActivity extends Activity {
             case AUTH_FAILURE: return "인증이 거부되었거나 로그인 화면으로 이동할 수 없습니다. 서버 연결 설정의 기기 토큰과 Access 인증 정보를 확인한 뒤 다시 시작해 주세요.";
             case TLS_FAILURE: return "서버 인증서를 확인하지 못했습니다. 서버 연결 설정의 주소와 인증서 신뢰 설정을 확인해 주세요.";
             case SECURITY_FAILURE: return "보안 저장소를 사용할 수 없습니다. 서버 연결 설정에서 기기 토큰과 사용하는 Access 인증 정보를 다시 저장한 뒤 시작해 주세요.";
-            case PERMISSION_REQUIRED: return notificationPermissionGranted()
-                    ? "클립보드 도우미를 확인해야 합니다. 아래 도우미 준비 상태를 확인해 주세요."
-                    : "알림 권한을 허용해야 서비스 상태를 계속 표시할 수 있습니다.";
+            case PERMISSION_REQUIRED: return "클립보드 도우미를 확인해야 합니다. 아래 도우미 준비 상태를 확인해 주세요.";
             case RETRY: return "일시적인 연결 문제로 잠시 후 자동으로 다시 시도합니다.";
             case STOPPED: return "시작하면 릴레이 서버에 연결합니다.";
             default: return "현재 릴레이 연결이 없습니다. 시작을 눌러 다시 연결해 주세요.";
@@ -401,6 +391,11 @@ public final class MainActivity extends Activity {
                 : "접근 권한 필요 · Android 알림을 전달하려면 허용하세요.");
         updateText(deliveryReadiness, (active ? "마지막 큐 상태: " : "전송 중지됨 · 마지막 큐 상태: ")
                 + config.notificationDeliveryStatus() + "\nMac 알림 표시: 확인 안 함");
+        NotificationChannel channel = manager.getNotificationChannel(BridgeService.CHANNEL_ID);
+        boolean notificationsAllowed = notificationPermissionGranted() && manager.areNotificationsEnabled()
+                && (channel == null || channel.getImportance() != NotificationManager.IMPORTANCE_NONE);
+        updateText(notificationReadiness, notificationsAllowed ? "표시 중 · 아래에서 숨길 수 있습니다."
+                : "숨김 · 연결과 알림 전달에는 영향이 없습니다.");
     }
 
     private void refreshHelperReadiness() {
@@ -416,6 +411,16 @@ public final class MainActivity extends Activity {
         else sharing = state == EmbeddedHelperManager.State.READY ? "최근 감지 상태: " + config.clipboardCapability()
                 : "클립보드 공유 대기 · 아래 클립보드 도우미를 확인해 주세요.";
         updateText(clipboardReadiness, sharing);
+    }
+
+    private void openNotificationPermission() {
+        NotificationManager manager = getSystemService(NotificationManager.class);
+        NotificationChannel channel = manager.getNotificationChannel(BridgeService.CHANNEL_ID);
+        boolean channelSettings = channel != null && manager.areNotificationsEnabled();
+        Intent settings = new Intent(channelSettings ? Settings.ACTION_CHANNEL_NOTIFICATION_SETTINGS : Settings.ACTION_APP_NOTIFICATION_SETTINGS)
+                .putExtra(Settings.EXTRA_APP_PACKAGE, getPackageName());
+        if (channelSettings) settings.putExtra(Settings.EXTRA_CHANNEL_ID, BridgeService.CHANNEL_ID);
+        startActivity(settings);
     }
 
     private boolean notificationPermissionGranted() {

@@ -154,12 +154,16 @@ public final class BridgeService extends Service {
     }
     private void createChannel() {
         NotificationManager manager = getSystemService(NotificationManager.class);
-        manager.createNotificationChannel(new NotificationChannel(CHANNEL_ID, "연속성 브리지 상태", NotificationManager.IMPORTANCE_LOW));
+        NotificationChannel channel = new NotificationChannel(CHANNEL_ID, "연결 상태", NotificationManager.IMPORTANCE_LOW);
+        channel.setDescription("알림을 꺼도 연결과 공유는 계속됩니다.");
+        channel.setShowBadge(false);
+        manager.createNotificationChannel(channel);
     }
     private Notification notification(ConnectionStatus status) {
         Intent open = new Intent(this, MainActivity.class);
         PendingIntent pending = PendingIntent.getActivity(this, 0, open, PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT);
         return new Notification.Builder(this, CHANNEL_ID).setSmallIcon(android.R.drawable.stat_notify_sync)
-                .setContentTitle("연속성 브리지").setContentText(status.korean()).setContentIntent(pending).setOngoing(true).build();
+                .setContentTitle("연속성 브리지").setContentText(status.korean()).setContentIntent(pending)
+                .setCategory(Notification.CATEGORY_SERVICE).setOnlyAlertOnce(true).setShowWhen(false).setOngoing(true).build();
     }
 }
