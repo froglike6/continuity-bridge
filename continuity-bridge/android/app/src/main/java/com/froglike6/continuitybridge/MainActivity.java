@@ -46,16 +46,23 @@ public final class MainActivity extends Activity {
     private TextView endpointError;
     private TextView pinError;
     private TextView tokenError;
+    private TextView accessClientIdError;
+    private TextView accessClientSecretError;
+    private TextView accessCredentialHelper;
     private EditText endpoint;
     private EditText pin;
     private EditText token;
+    private EditText accessClientId;
+    private EditText accessClientSecret;
     private CheckBox systemTrust;
+    private CheckBox accessEnabled;
     private Button start;
     private Button stop;
     private Button save;
     private Button disclosure;
     private Button stopAndEdit;
     private LinearLayout configurationGroup;
+    private LinearLayout accessCredentialsGroup;
     private boolean configurationExpanded;
     private ConfigStore config;
     private EmbeddedHelperManager clipboardHelper;
@@ -163,6 +170,30 @@ public final class MainActivity extends Activity {
         token.setImeOptions(EditorInfo.IME_ACTION_DONE | EditorInfo.IME_FLAG_NO_PERSONALIZED_LEARNING);
         tokenError = fieldError(configurationGroup);
         credentialHelper = caption(configurationGroup, "");
+        accessEnabled = new CheckBox(this);
+        accessEnabled.setText("Cloudflare Access 사용");
+        accessEnabled.setChecked(state == null ? config.accessEnabled() : state.getBoolean("draft_access_enabled", config.accessEnabled()));
+        accessEnabled.setMinHeight(dimension(R.dimen.continuity_control_min_height));
+        accessEnabled.setTextSize(TypedValue.COMPLEX_UNIT_PX, getResources().getDimension(R.dimen.continuity_type_ui_body));
+        configurationGroup.addView(accessEnabled, fullWidth());
+        accessCredentialsGroup = group(configurationGroup);
+        caption(accessCredentialsGroup, "이 기기의 Access 서비스 인증 정보를 입력하세요. 기기 인증 토큰도 함께 필요합니다.");
+        AccessCredentials savedAccess = null;
+        try { savedAccess = new TokenStore(this).loadAccess(); }
+        catch (SecureStoreException error) { savedAccess = null; }
+        accessClientId = field(accessCredentialsGroup, "Cloudflare Access Client ID", savedAccess == null ? "" : savedAccess.clientId(),
+                InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS);
+        accessClientId.setSaveEnabled(false);
+        accessClientId.setImportantForAutofill(View.IMPORTANT_FOR_AUTOFILL_NO);
+        accessClientId.setImeOptions(EditorInfo.IME_ACTION_NEXT | EditorInfo.IME_FLAG_NO_PERSONALIZED_LEARNING);
+        accessClientIdError = fieldError(accessCredentialsGroup);
+        accessClientSecret = field(accessCredentialsGroup, "Cloudflare Access Client Secret", "", InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD);
+        accessClientSecret.setContentDescription("Cloudflare Access Client Secret 보안 입력");
+        accessClientSecret.setSaveEnabled(false);
+        accessClientSecret.setImportantForAutofill(View.IMPORTANT_FOR_AUTOFILL_NO);
+        accessClientSecret.setImeOptions(EditorInfo.IME_ACTION_DONE | EditorInfo.IME_FLAG_NO_PERSONALIZED_LEARNING);
+        accessClientSecretError = fieldError(accessCredentialsGroup);
+        accessCredentialHelper = caption(accessCredentialsGroup, "");
         save = button(configurationGroup, "설정 저장");
         save.setOnClickListener(new View.OnClickListener() { @Override public void onClick(View view) { saveConfiguration(); } });
         saveFeedback = feedback(configurationGroup);
@@ -175,9 +206,20 @@ public final class MainActivity extends Activity {
                 applyState(config.status());
             }
         });
+        accessEnabled.setOnCheckedChangeListener(new CompoundButton.OnCheckedChangeListener() {
+            @Override public void onCheckedChanged(CompoundButton button, boolean checked) {
+                clearFieldError(accessClientId, accessClientIdError);
+                clearFieldError(accessClientSecret, accessClientSecretError);
+                configurationEdited();
+                applyState(config.status());
+                refreshAccessCredentialHelper();
+            }
+        });
         watchField(endpoint, endpointError);
         watchField(pin, pinError);
         watchField(token, tokenError);
+        watchField(accessClientId, accessClientIdError);
+        watchField(accessClientSecret, accessClientSecretError);
         setConfigurationExpanded(state == null ? configurationNeedsAttention() : state.getBoolean("configuration_expanded", false));
         ScrollView scroll = new ScrollView(this);
         scroll.setBackgroundColor(semanticColor(android.R.attr.colorBackground));
@@ -192,6 +234,7 @@ public final class MainActivity extends Activity {
         state.putString("draft_endpoint", endpoint.getText().toString());
         state.putString("draft_pin", pin.getText().toString());
         state.putBoolean("draft_system_trust", systemTrust.isChecked());
+        state.putBoolean("draft_access_enabled", accessEnabled.isChecked());
         state.putBoolean("configuration_expanded", configurationExpanded);
         super.onSaveInstanceState(state);
     }
@@ -240,9 +283,12 @@ public final class MainActivity extends Activity {
         clearFieldError(endpoint, endpointError);
         clearFieldError(pin, pinError);
         clearFieldError(token, tokenError);
+        clearFieldError(accessClientId, accessClientIdError);
+        clearFieldError(accessClientSecret, accessClientSecretError);
         String address = endpoint.getText().toString().trim();
         String certificatePin = pin.getText().toString().trim().toLowerCase(Locale.ROOT);
         String enteredToken = token.getText().toString();
+        AccessCredentials preparedAccess = null;
         EditText invalid = null;
         try { ConfigValidator.httpsUrl(address); }
         catch (IllegalArgumentException error) {
@@ -260,6 +306,18 @@ public final class MainActivity extends Activity {
             setFieldError(token, tokenError, "처음 연결하려면 기기 인증 토큰을 입력해 주세요.");
             if (invalid == null) invalid = token;
         }
+        try { preparedAccess = enteredAccessCredentials(); }
+        catch (AccessCredentials.ValidationException error) {
+            boolean idInvalid = error.field() == AccessCredentials.Field.CLIENT_ID;
+            EditText field = idInvalid ? accessClientId : accessClientSecret;
+            setFieldError(field, idInvalid ? accessClientIdError : accessClientSecretError, idInvalid
+                    ? "공백이나 줄바꿈 없이 이 기기의 Client ID를 입력해 주세요."
+                    : "Client Secret을 입력해 주세요. 비워 두려면 저장된 Client ID와 같아야 하며 공백·줄바꿈은 사용할 수 없습니다.");
+            if (invalid == null) invalid = field;
+        } catch (SecureStoreException error) {
+            setFieldError(accessClientSecret, accessClientSecretError, "저장된 Access 인증 정보를 읽지 못했습니다. Client Secret을 다시 입력해 저장해 주세요.");
+            if (invalid == null) invalid = accessClientSecret;
+        }
         if (invalid != null) {
             setConfigurationExpanded(true);
             showFeedback(saveFeedback, "저장하지 못했습니다. 표시된 입력 항목을 확인해 주세요.");
@@ -268,10 +326,12 @@ public final class MainActivity extends Activity {
         }
         try {
             if (!enteredToken.isEmpty()) new TokenStore(this).put(enteredToken);
-            config.save(address, certificatePin, systemTrust.isChecked());
+            if (preparedAccess != null && !accessClientSecret.getText().toString().isEmpty()) new TokenStore(this).putAccess(preparedAccess);
+            config.save(address, certificatePin, systemTrust.isChecked(), accessEnabled.isChecked());
             endpoint.setText(address);
             pin.setText(systemTrust.isChecked() ? "" : certificatePin);
             token.setText("");
+            accessClientSecret.setText("");
             refreshCredentialHelper();
             showFeedback(saveFeedback, "설정을 저장했습니다. 다음 시작부터 사용합니다.");
             actionFeedback.setVisibility(View.GONE);
@@ -306,6 +366,7 @@ public final class MainActivity extends Activity {
                 || value == ConnectionStatus.SECURITY_FAILURE || value == ConnectionStatus.PERMISSION_REQUIRED) actionFeedback.setVisibility(View.GONE);
         refreshReadiness(value);
         refreshCredentialHelper();
+        refreshAccessCredentialHelper();
         applyState(value);
     }
 
@@ -314,9 +375,9 @@ public final class MainActivity extends Activity {
             case CONNECTED: return "릴레이 서버에 연결되어 있습니다. 다른 기기의 접속 여부는 확인하지 않습니다.";
             case CLIPBOARD_WAIT: return "클립보드 접근을 기다립니다.\n준비되면 자동으로 복사를 이어갑니다.";
             case CONNECTING: return "릴레이 서버와 보안 연결을 확인하고 있습니다.";
-            case AUTH_FAILURE: return "인증이 거부되었거나 로그인 화면으로 이동할 수 없습니다. 서버 연결 설정의 기기 토큰을 확인한 뒤 다시 시작해 주세요.";
+            case AUTH_FAILURE: return "인증이 거부되었거나 로그인 화면으로 이동할 수 없습니다. 서버 연결 설정의 기기 토큰과 Access 인증 정보를 확인한 뒤 다시 시작해 주세요.";
             case TLS_FAILURE: return "서버 인증서를 확인하지 못했습니다. 서버 연결 설정의 주소와 인증서 신뢰 설정을 확인해 주세요.";
-            case SECURITY_FAILURE: return "보안 저장소를 사용할 수 없습니다. 서버 연결 설정에서 기기 토큰을 다시 저장한 뒤 시작해 주세요.";
+            case SECURITY_FAILURE: return "보안 저장소를 사용할 수 없습니다. 서버 연결 설정에서 기기 토큰과 사용하는 Access 인증 정보를 다시 저장한 뒤 시작해 주세요.";
             case PERMISSION_REQUIRED: return notificationPermissionGranted()
                     ? "클립보드 도우미를 확인해야 합니다. 아래 도우미 준비 상태를 확인해 주세요."
                     : "알림 권한을 허용해야 서비스 상태를 계속 표시할 수 있습니다.";
@@ -362,12 +423,16 @@ public final class MainActivity extends Activity {
         setConfigurationControlState(endpoint, "릴레이 HTTPS 주소", decision.configurationEnabled(), value);
         setConfigurationControlState(token, "기기 인증 토큰 보안 입력", decision.configurationEnabled(), value);
         setConfigurationControlState(systemTrust, "시스템 신뢰 저장소 사용", decision.configurationEnabled(), value);
+        setConfigurationControlState(accessEnabled, "Cloudflare Access 사용", decision.configurationEnabled(), value);
+        setConfigurationControlState(accessClientId, "Cloudflare Access Client ID", decision.configurationEnabled(), value);
+        setConfigurationControlState(accessClientSecret, "Cloudflare Access Client Secret 보안 입력", decision.configurationEnabled(), value);
+        accessCredentialsGroup.setVisibility(accessEnabled.isChecked() ? View.VISIBLE : View.GONE);
         pin.setEnabled(decision.pinEnabled()); if (!decision.pinEnabled()) resetDisabledFieldViewport(pin);
         start.setEnabled(decision.startEnabled()); stop.setEnabled(decision.stopEnabled());
         save.setEnabled(decision.configurationEnabled());
         stopAndEdit.setVisibility(decision.stopEnabled() ? View.VISIBLE : View.GONE);
         updateText(configurationHelper, decision.configurationEnabled()
-                ? "주소·인증서·토큰을 설정하세요."
+                ? "주소·인증서·토큰과 필요한 경우 Access 인증 정보를 설정하세요."
                 : "중지 후 변경 · 실행 중에는 현재 설정을 사용합니다.");
         pin.setContentDescription(decision.pinEnabled() ? "서버 인증서 SHA-256 핀" : systemTrust.isChecked()
                 ? "서버 인증서 SHA-256 핀: 시스템 신뢰 저장소를 사용하도록 선택되어 인증서 핀이 필요하지 않습니다."
@@ -390,8 +455,32 @@ public final class MainActivity extends Activity {
                 : "저장된 토큰 없음\n처음 연결할 때 입력해 주세요.");
     }
 
+    private AccessCredentials enteredAccessCredentials() throws SecureStoreException {
+        if (!accessEnabled.isChecked()) return null;
+        String clientId = accessClientId.getText().toString();
+        AccessCredentials.validateClientId(clientId);
+        String secret = accessClientSecret.getText().toString();
+        AccessCredentials saved = secret.isEmpty() ? new TokenStore(this).loadAccess() : null;
+        return AccessCredentials.forSave(clientId, secret, saved);
+    }
+
+    private void refreshAccessCredentialHelper() {
+        try {
+            AccessCredentials saved = new TokenStore(this).loadAccess();
+            updateText(accessCredentialHelper, saved == null
+                    ? "저장된 Access 인증 정보 없음\nClient ID와 Client Secret을 입력해 주세요."
+                    : saved.clientId().equals(accessClientId.getText().toString())
+                            ? "저장된 Access 인증 정보 있음\nSecret을 비워 두면 저장된 값을 사용합니다."
+                            : "Client ID가 변경되었습니다.\n새 Client Secret을 함께 입력해 주세요.");
+        } catch (SecureStoreException error) {
+            updateText(accessCredentialHelper, "저장된 Access 인증 정보를 읽을 수 없습니다.\nClient ID와 Client Secret을 다시 입력해 주세요.");
+        }
+    }
+
     private boolean configurationNeedsAttention() {
         if (!hasStoredToken()) return true;
+        try { enteredAccessCredentials(); }
+        catch (SecureStoreException | AccessCredentials.ValidationException error) { return true; }
         try {
             ConfigValidator.httpsUrl(endpoint.getText().toString().trim());
             if (!systemTrust.isChecked()) ConfigValidator.pin(pin.getText().toString().trim().toLowerCase(Locale.ROOT));
@@ -417,6 +506,7 @@ public final class MainActivity extends Activity {
             @Override public void onTextChanged(CharSequence text, int start, int before, int count) {
                 clearFieldError(field, error);
                 configurationEdited();
+                if (field == accessClientId) refreshAccessCredentialHelper();
             }
             @Override public void afterTextChanged(Editable text) { }
         });
