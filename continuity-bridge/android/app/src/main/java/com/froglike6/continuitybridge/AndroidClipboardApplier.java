@@ -6,6 +6,7 @@ import android.content.ClipboardManager;
 import android.content.Context;
 import android.app.KeyguardManager;
 import android.os.PersistableBundle;
+import java.io.IOException;
 
 final class AndroidClipboardApplier implements EventApplier {
     static final String EVENT_ID_EXTRA = "com.froglike6.continuitybridge.EVENT_ID";
@@ -19,6 +20,8 @@ final class AndroidClipboardApplier implements EventApplier {
         transaction = new ClipboardApplyTransaction(store, new ClipboardSurface() {
             @Override public boolean set(String eventId, String text) { return setClip(eventId, text); }
             @Override public boolean confirm(String eventId, String text) { return confirmClip(eventId); }
+            @Override public boolean setContent(String eventId, ClipboardContent content) { return setClip(eventId, content); }
+            @Override public boolean confirmContent(String eventId, ClipboardContent content) { return confirmClip(eventId); }
         });
     }
 
@@ -33,28 +36,36 @@ final class AndroidClipboardApplier implements EventApplier {
     }
 
     private boolean setClip(String eventId, String text) {
+        return setClip(eventId, ClipboardContent.text(text));
+    }
+
+    private boolean setClip(String eventId, ClipboardContent content) {
         try {
-            ClipData clip = ClipData.newPlainText("Continuity Bridge", text);
+            final ClipData clip;
+            if (content.isImage()) {
+                ClipboardImageReader.validated(content.mimeType(), content.bytes());
+                android.net.Uri uri = ClipboardImageProvider.store(context, content);
+                clip = new ClipData("Continuity Bridge", new String[] {content.mimeType()}, new ClipData.Item(uri));
+            } else clip = ClipData.newPlainText("Continuity Bridge", content.text());
             PersistableBundle extras = new PersistableBundle(); extras.putString(EVENT_ID_EXTRA, eventId);
             clip.getDescription().setExtras(extras); clipboard.setPrimaryClip(clip);
             return true;
-        } catch (RuntimeException error) { return false; }
+        } catch (IOException | RuntimeException error) {
+            if (content.isImage()) new ConfigStore(context).clipboardCapability(ClipboardImageReader.status(error));
+            return false;
+        }
     }
 
     private boolean confirmClip(String eventId) {
         try {
-            ClipData observed = clipboard.getPrimaryClip();
-            if (observed != null && observed.getItemCount() == 1 && observed.getItemAt(0).getText() != null) {
-                long timestamp = observed.getDescription().getTimestamp();
-                String identity = timestamp == 0 ? "apply:" + eventId : "timestamp:" + timestamp;
-                if (RemoteApplyTracker.confirm(marker(observed.getDescription()), observed.getItemAt(0).getText().toString(), identity)) return true;
-            }
-        } catch (SecurityException unavailable) { }
-        if (Thread.currentThread().isInterrupted()) return false;
-        ClipboardCaptureController.requestOverlay(context, "apply:" + eventId);
-        boolean confirmed = RemoteApplyTracker.awaitConfirmation(eventId, 2_000);
-        if (!confirmed) new ConfigStore(context).clipboardCapability("클립보드 적용 확인 필요");
-        return confirmed;
+            ClipData current = ShizukuClipboardClient.get(context).read();
+            ClipboardObservation observed = ClipboardObservation.fromShizuku(current, "apply:" + eventId);
+            if (observed != null && RemoteApplyTracker.confirmContent(observed.marker, observed.content(context), observed.identity)) return true;
+        } catch (IOException | SecurityException unavailable) {
+            MetadataLog.clipboardMonitor("shizuku_apply_unavailable");
+        }
+        new ConfigStore(context).clipboardCapability("Shizuku 연결 후 복사를 이어갑니다");
+        return false;
     }
 
     static String marker(ClipDescription description) {

@@ -18,10 +18,11 @@ EXPECTED_PERMISSIONS = (
     "android.permission.FOREGROUND_SERVICE_REMOTE_MESSAGING",
     "android.permission.INTERNET",
     "android.permission.POST_NOTIFICATIONS",
-    "android.permission.READ_LOGS",
-    "android.permission.SYSTEM_ALERT_WINDOW",
+    "android.permission.ACCESS_NETWORK_STATE",
+    "android.permission.RECEIVE_BOOT_COMPLETED",
+    "android.permission.WRITE_SECURE_SETTINGS",
 )
-EXPECTED_ACTIVITIES = (".ClipboardOverlayActivity", ".MainActivity")
+EXPECTED_ACTIVITIES = (".MainActivity", ".HelperSetupActivity")
 EXPECTED_SERVICES = (".BridgeService", ".NotificationMirrorService")
 NLS_PERMISSION = "android.permission.BIND_NOTIFICATION_LISTENER_SERVICE"
 NLS_ACTION = "android.service.notification.NotificationListenerService"
@@ -115,7 +116,7 @@ applications = direct_children(root, "application")
 if len(applications) != 1:
     fail("MANIFEST_APPLICATION_COUNT_MISMATCH")
 application = applications[0]
-require_children(application, {"activity", "service", "provider"}, "MANIFEST_APPLICATION_CHILD_UNEXPECTED")
+require_children(application, {"activity", "service", "provider", "receiver"}, "MANIFEST_APPLICATION_CHILD_UNEXPECTED")
 
 for attribute, expected, marker in (
     ("allowBackup", "false", "MANIFEST_APPLICATION_ALLOW_BACKUP"),
@@ -128,8 +129,6 @@ for attribute, expected, marker in (
         fail(f"{marker}_MISSING" if actual is None else f"{marker}_MISMATCH")
 
 for element in root.iter():
-    if element.tag == "receiver":
-        fail("MANIFEST_FORBIDDEN_RECEIVER")
     class_name = android_attr(element, "name") or ""
     if "AccessibilityService" in class_name:
         fail("MANIFEST_FORBIDDEN_ACCESSIBILITY_SERVICE")
@@ -137,7 +136,7 @@ for element in root.iter():
         fail("MANIFEST_FORBIDDEN_INPUT_METHOD_SERVICE")
 
 providers = direct_children(application, "provider")
-if len(providers) != 1:
+if len(providers) != 2:
     fail("MANIFEST_PROVIDER_COUNT_MISMATCH")
 expected_providers = {
     ".ClipboardImageProvider": {
@@ -145,6 +144,14 @@ expected_providers = {
         "authorities": "com.froglike6.continuitybridge.clipboard.images",
         "exported": "false",
         "grantUriPermissions": "true",
+    },
+    ".ClipboardHelperProvider": {
+        "name": ".ClipboardHelperProvider",
+        "authorities": "com.froglike6.continuitybridge.clipboard.helper",
+        "exported": "true",
+        "enabled": "true",
+        "multiprocess": "false",
+        "permission": "android.permission.INTERACT_ACROSS_USERS_FULL",
     },
 }
 if Counter(android_attr(provider, "name") for provider in providers) != Counter(expected_providers.keys()):
@@ -155,6 +162,21 @@ for provider in providers:
     if provider.attrib != expected_attributes:
         fail(f"MANIFEST_PROVIDER_ATTRIBUTES_MISMATCH={provider_name}")
     require_no_children(provider, "MANIFEST_PROVIDER_CHILD_UNEXPECTED")
+
+receivers = direct_children(application, "receiver")
+if len(receivers) != 1 or android_attr(receivers[0], "name") != ".HelperBootReceiver":
+    fail("MANIFEST_BOOT_RECEIVER_MISMATCH")
+if android_attr(receivers[0], "exported") != "false":
+    fail("MANIFEST_BOOT_RECEIVER_EXPORTED")
+require_children(receivers[0], {"intent-filter"}, "MANIFEST_BOOT_RECEIVER_CHILD_UNEXPECTED")
+boot_filters = direct_children(receivers[0], "intent-filter")
+if len(boot_filters) != 1:
+    fail("MANIFEST_BOOT_FILTER_MISMATCH")
+require_children(boot_filters[0], {"action"}, "MANIFEST_BOOT_FILTER_CHILD_UNEXPECTED")
+if Counter(android_attr(action, "name") for action in direct_children(boot_filters[0], "action")) != Counter([
+    "android.intent.action.BOOT_COMPLETED", "android.intent.action.MY_PACKAGE_REPLACED"
+]):
+    fail("MANIFEST_BOOT_ACTION_MISMATCH")
 
 permissions = [android_attr(child, "name") for child in direct_children(root, "uses-permission")]
 exact_values(
@@ -205,8 +227,10 @@ if android_attr(mirror_service, "permission") != NLS_PERMISSION:
 
 for activity in direct_children(application, "activity"):
     activity_name = android_attr(activity, "name")
-    if activity_name == ".ClipboardOverlayActivity":
-        require_no_children(activity, "MANIFEST_OVERLAY_ACTIVITY_CHILD_UNEXPECTED")
+    if activity_name == ".HelperSetupActivity":
+        require_no_children(activity, "MANIFEST_NOTIFICATION_APPS_CHILD_UNEXPECTED")
+        if android_attr(activity, "exported") != "false":
+            fail("MANIFEST_NOTIFICATION_APPS_EXPORTED")
     elif activity_name == ".MainActivity":
         require_children(activity, {"intent-filter"}, "MANIFEST_MAIN_ACTIVITY_CHILD_UNEXPECTED")
         filters = direct_children(activity, "intent-filter")
@@ -252,5 +276,5 @@ for action in root.iter():
     ):
         fail("MANIFEST_NOTIFICATION_LISTENER_ACTION_WRONG_NODE")
 
-print("MANIFEST_SOURCE_OK permissions=6 activities=2 services=2 image_provider=1 overlay=1 notification_listener=1")
+print("MANIFEST_SOURCE_OK permissions=7 activities=2 services=2 image_provider=1 helper_provider=1 boot_receiver=1 overlay=0 notification_listener=1")
 PY

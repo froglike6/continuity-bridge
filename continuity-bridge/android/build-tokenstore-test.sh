@@ -12,14 +12,16 @@ JAVA_HOME="/Applications/Android Studio.app/Contents/jbr/Contents/Home"
 KEYSTORE=$HOME/.android/debug.keystore
 BUILD="$ANDROID_DIR/build/tokenstore-test"
 TEST="$ANDROID_DIR/instrumentation-test"
-test -d "$ANDROID_DIR/build/android/classes" || { echo 'Build production classes first' >&2; exit 1; }
+PRODUCTION_BUILD="$ANDROID_DIR/build/shizuku"
+test -d "$PRODUCTION_BUILD/classes" || { echo 'Build Shizuku production classes first' >&2; exit 1; }
+DEPENDENCY_CP=$(find "$PRODUCTION_BUILD/dependencies/jars" -name '*.jar' -print | LC_ALL=C sort | paste -sd ':' -)
 find "$BUILD" -type f -delete 2>/dev/null || true
 find "$BUILD" -depth -type d -empty -delete 2>/dev/null || true
 mkdir -p "$BUILD/classes" "$BUILD/dex"
 find "$TEST" -name '*.java' -print | LC_ALL=C sort > "$BUILD/sources.txt"
 "$TOOLS/aapt2" link -I "$PLATFORM_JAR" --manifest "$TEST/AndroidManifest.xml" --min-sdk-version 29 --target-sdk-version 35 -o "$BUILD/test-unsigned.apk"
 "$JAVA_HOME/bin/javac" -Xlint:all -Xlint:-deprecation -Xlint:-options -encoding UTF-8 -source 8 -target 8 \
-    -bootclasspath "$PLATFORM_JAR" -classpath "$ANDROID_DIR/build/android/classes:$TEST_RUNNER_JAR:$TEST_BASE_JAR" -d "$BUILD/classes" @"$BUILD/sources.txt"
+    -bootclasspath "$PLATFORM_JAR" -classpath "$PRODUCTION_BUILD/classes:$DEPENDENCY_CP:$TEST_RUNNER_JAR:$TEST_BASE_JAR" -d "$BUILD/classes" @"$BUILD/sources.txt"
 (cd "$BUILD/classes" && /usr/bin/zip -X -q -r "$BUILD/classes.zip" .)
 "$TOOLS/d8" --lib "$PLATFORM_JAR" --min-api 29 --output "$BUILD/dex" "$BUILD/classes.zip"
 (cd "$BUILD/dex" && /usr/bin/zip -X -q "$BUILD/test-unsigned.apk" classes.dex)

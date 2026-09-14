@@ -2,19 +2,29 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.froglike6.continuitybridge">
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
-    <uses-permission android:name="android.permission.READ_LOGS" />
-    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <uses-permission android:name="android.permission.WRITE_SECURE_SETTINGS" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_REMOTE_MESSAGING" />
-    <application android:allowBackup="false" android:label="연속성 브리지" android:icon="@mipmap/ic_launcher" android:roundIcon="@mipmap/ic_launcher" android:theme="@android:style/Theme.Material.Settings" android:usesCleartextTraffic="false">
+    <application android:allowBackup="false" android:label="연속성 브리지" android:icon="@mipmap/ic_launcher" android:roundIcon="@mipmap/ic_launcher" android:theme="@android:style/Theme.Material.Settings" android:usesCleartextTraffic="false" android:extractNativeLibs="true">
+        <provider android:name=".ClipboardHelperProvider"
+            android:authorities="com.froglike6.continuitybridge.clipboard.helper" android:multiprocess="false"
+            android:enabled="true" android:exported="true" android:permission="android.permission.INTERACT_ACROSS_USERS_FULL" />
         <activity android:name=".MainActivity" android:exported="true" android:theme="@style/Theme.ContinuityBridge.Settings">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
-        <activity android:name=".ClipboardOverlayActivity" android:exported="false" android:excludeFromRecents="true"
-            android:noHistory="true" android:taskAffinity="" android:theme="@android:style/Theme.Translucent.NoTitleBar" />
+        <activity android:name=".HelperSetupActivity" android:exported="false" android:theme="@style/Theme.ContinuityBridge.Settings"
+            android:windowSoftInputMode="adjustResize" android:resizeableActivity="true" />
+        <receiver android:name=".HelperBootReceiver" android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+            </intent-filter>
+        </receiver>
         <provider android:name=".ClipboardImageProvider" android:authorities="com.froglike6.continuitybridge.clipboard.images"
             android:exported="false" android:grantUriPermissions="true" />
         <service android:name=".BridgeService" android:exported="false" android:foregroundServiceType="remoteMessaging" android:stopWithTask="false" />

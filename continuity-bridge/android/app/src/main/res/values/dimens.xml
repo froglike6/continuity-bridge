@@ -2,10 +2,17 @@
 <resources>
     <dimen name="continuity_space_1">4dp</dimen>
     <dimen name="continuity_space_2">8dp</dimen>
+    <dimen name="continuity_space_3">12dp</dimen>
     <dimen name="continuity_space_4">16dp</dimen>
     <dimen name="continuity_space_6">24dp</dimen>
+    <dimen name="continuity_space_8">32dp</dimen>
     <dimen name="continuity_control_min_height">48dp</dimen>
     <dimen name="continuity_divider_height">1dp</dimen>
-    <dimen name="continuity_type_ui_status">20sp</dimen>
+    <dimen name="continuity_surface_radius">20dp</dimen>
+    <dimen name="continuity_identity_size">64dp</dimen>
+    <dimen name="continuity_source_icon_size">36dp</dimen>
+    <dimen name="continuity_type_ui_title">28sp</dimen>
+    <dimen name="continuity_type_ui_status">24sp</dimen>
     <dimen name="continuity_type_ui_body">14sp</dimen>
+    <dimen name="continuity_type_ui_caption">12sp</dimen>
 </resources>

@@ -35,6 +35,7 @@ public final class BridgeService extends Service {
     }
 
     @Override public int onStartCommand(Intent intent, int flags, int startId) {
+        new EmbeddedHelperPreferences(this).bridgeRequested(true);
         ServiceRunCoordinator.Run run = runs.start();
         if (run != null) {
             Worker worker = new Worker(run); activeWorker = worker;

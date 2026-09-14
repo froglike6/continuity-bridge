@@ -89,7 +89,7 @@ case_android_coherence() {
     set -e
     test "$build_status" -eq 0 || fail android_build_nonzero_false_green
     mkdir "$work/apk"
-    (cd "$work/apk" && unzip -q "$work/outputs/continuity-bridge-android-debug.apk" 'res/raw/continuity_local_ca.pem')
+    (cd "$work/apk" && unzip -q "$work/outputs/continuity-bridge-android-embedded-debug.apk" 'res/raw/continuity_local_ca.pem')
     printf 'TLS_LIFECYCLE_ANDROID_OBS runtime_ca=%s apk_ca=%s\n' \
         "$(sha256 "$work/continuity-bridge/runtime/tls/ca.pem")" \
         "$(sha256 "$work/apk/res/raw/continuity_local_ca.pem")"

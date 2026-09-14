@@ -54,6 +54,18 @@ test "$MANIFEST_EXIT" -ne 0
 echo "NEGATIVE_MANIFEST_CAPABILITY_EXIT=$MANIFEST_EXIT"
 
 cp "$ANDROID_DIR/app/src/main/AndroidManifest.xml" "$MUTANT/app/src/main/AndroidManifest.xml"
+perl -0pi -e 's#android:permission="android.permission.INTERACT_ACROSS_USERS_FULL"##' "$MUTANT/app/src/main/AndroidManifest.xml"
+set +e; "$MUTANT/verify-manifest-source.sh" "$MUTANT/app/src/main/AndroidManifest.xml" > "$TEMP/shizuku-provider-unprotected.txt" 2>&1; PROVIDER_EXIT=$?; set -e
+test "$PROVIDER_EXIT" -ne 0; grep -Fq 'MANIFEST_PROVIDER_ATTRIBUTES_MISMATCH=.ClipboardHelperProvider' "$TEMP/shizuku-provider-unprotected.txt"
+echo "NEGATIVE_SHIZUKU_PROVIDER_EXIT=$PROVIDER_EXIT marker=MANIFEST_PROVIDER_ATTRIBUTES_MISMATCH"
+
+cp "$ANDROID_DIR/app/src/main/AndroidManifest.xml" "$MUTANT/app/src/main/AndroidManifest.xml"
+perl -0pi -e 's#(<application )#<uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />\n    $1#' "$MUTANT/app/src/main/AndroidManifest.xml"
+set +e; "$MUTANT/verify-manifest-source.sh" "$MUTANT/app/src/main/AndroidManifest.xml" > "$TEMP/legacy-overlay-permission.txt" 2>&1; PERMISSION_EXIT=$?; set -e
+test "$PERMISSION_EXIT" -ne 0; grep -Fq 'MANIFEST_PERMISSION_UNEXPECTED=android.permission.SYSTEM_ALERT_WINDOW' "$TEMP/legacy-overlay-permission.txt"
+echo "NEGATIVE_OVERLAY_PERMISSION_EXIT=$PERMISSION_EXIT marker=MANIFEST_PERMISSION_UNEXPECTED"
+
+cp "$ANDROID_DIR/app/src/main/AndroidManifest.xml" "$MUTANT/app/src/main/AndroidManifest.xml"
 perl -0pi -e 's#<action android:name="android.intent.action.MAIN" />##' "$MUTANT/fixture/src/main/AndroidManifest.xml"
 set +e; "$MUTANT/build-fixture.sh" > "$TEMP/fixture-missing.txt" 2>&1; FIXTURE_EXIT=$?; set -e
 test "$FIXTURE_EXIT" -ne 0; grep -Fq 'ADAPTER_BOUNDARY_FAIL=fixture_launcher_missing' "$TEMP/fixture-missing.txt"
@@ -67,13 +79,13 @@ test "$EXTRAS_EXIT" -ne 0; grep -Fq 'ADAPTER_BOUNDARY_FAIL=clip_description_extr
 echo "NEGATIVE_EVENT_EXTRAS_EXIT=$EXTRAS_EXIT marker=clip_description_extras_source_missing success_markers=0"
 
 cp "$ANDROID_DIR/app/src/main/java/com/froglike6/continuitybridge/AndroidClipboardApplier.java" "$MUTANT/app/src/main/java/com/froglike6/continuitybridge/AndroidClipboardApplier.java"
-perl -0pi -e 's/WindowManager\.LayoutParams\.FLAG_WATCH_OUTSIDE_TOUCH/WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE | WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH/' "$MUTANT/app/src/main/java/com/froglike6/continuitybridge/ClipboardOverlayActivity.java"
-set +e; "$MUTANT/build.sh" > "$TEMP/overlay-not-focusable.txt" 2>&1; FOCUS_EXIT=$?; set -e
-test "$FOCUS_EXIT" -ne 0; grep -Fq 'ADAPTER_BOUNDARY_FAIL=overlay_focus_breaking_source' "$TEMP/overlay-not-focusable.txt"
-! grep -Fq 'ANDROID_BUILD_OK' "$TEMP/overlay-not-focusable.txt"
-echo "NEGATIVE_OVERLAY_FOCUS_EXIT=$FOCUS_EXIT marker=overlay_focus_breaking_source success_markers=0"
+perl -0pi -e 's/(final class ClipboardCaptureController[^\{]*\{)/$1\n    private static void forbiddenFocus(android.content.Context context) { context.startActivity(new android.content.Intent()); }/' "$MUTANT/app/src/main/java/com/froglike6/continuitybridge/ClipboardCaptureController.java"
+set +e; "$MUTANT/build.sh" > "$TEMP/clipboard-focus-fallback.txt" 2>&1; FOCUS_EXIT=$?; set -e
+test "$FOCUS_EXIT" -ne 0; grep -Fq 'CLIPBOARD_FORBIDDEN_BYTECODE=ClipboardCaptureController' "$TEMP/clipboard-focus-fallback.txt"
+! grep -Fq 'ANDROID_BUILD_OK' "$TEMP/clipboard-focus-fallback.txt"
+echo "NEGATIVE_CLIPBOARD_FOCUS_EXIT=$FOCUS_EXIT marker=CLIPBOARD_FORBIDDEN_BYTECODE success_markers=0"
 
-cp "$ANDROID_DIR/app/src/main/java/com/froglike6/continuitybridge/ClipboardOverlayActivity.java" "$MUTANT/app/src/main/java/com/froglike6/continuitybridge/ClipboardOverlayActivity.java"
+cp "$ANDROID_DIR/app/src/main/java/com/froglike6/continuitybridge/ClipboardCaptureController.java" "$MUTANT/app/src/main/java/com/froglike6/continuitybridge/ClipboardCaptureController.java"
 mkdir -p "$MUTANT/app/src/main/java/com/froglike6/continuityfixture"
 cp "$ANDROID_DIR/fixture/src/main/java/com/froglike6/continuityfixture/FixtureActivity.java" "$MUTANT/app/src/main/java/com/froglike6/continuityfixture/FixtureActivity.java"
 set +e; "$MUTANT/build.sh" > "$TEMP/fixture-in-production.txt" 2>&1; PROD_LEAK_EXIT=$?; set -e
@@ -113,4 +125,4 @@ run_fixture_resource_mutation raw_production_marker res/raw/continuitybridge_pro
 run_fixture_resource_mutation asset_production_marker assets/continuitybridge_probe.txt
 run_fixture_resource_mutation xml_production_marker res/xml/continuitybridge_probe.xml
 run_fixture_resource_mutation unowned_benign_name res/raw/unowned_probe.txt
-echo 'ADAPTER_NEGATIVE_OK mutations=clipboard_wiring,notification_wiring,production_manifest,fixture_launcher,event_extras,overlay_focus,fixture_in_production,production_in_fixture,fixture_raw_resource,fixture_asset,fixture_xml,fixture_unowned_name'
+echo 'ADAPTER_NEGATIVE_OK mutations=clipboard_wiring,notification_wiring,production_manifest,shizuku_provider_permission,overlay_permission,fixture_launcher,event_extras,clipboard_focus_fallback,fixture_in_production,production_in_fixture,fixture_raw_resource,fixture_asset,fixture_xml,fixture_unowned_name'

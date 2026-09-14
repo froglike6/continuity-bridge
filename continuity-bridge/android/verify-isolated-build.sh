@@ -10,7 +10,7 @@ cp "$ROOT/continuity-bridge/runtime/tls/ca.pem" "$TEMP/continuity-bridge/runtime
 ISOLATED="$TEMP/continuity-bridge/android"
 "$ISOLATED/build.sh"
 "$ISOLATED/build-fixture.sh"
-PROD="$TEMP/outputs/continuity-bridge-android-debug.apk"
+PROD="$TEMP/outputs/continuity-bridge-android-embedded-debug.apk"
 FIXTURE="$TEMP/outputs/continuity-fixture-debug.apk"
 test -s "$PROD"; test -s "$FIXTURE"
 shasum -a 256 "$PROD" "$FIXTURE"

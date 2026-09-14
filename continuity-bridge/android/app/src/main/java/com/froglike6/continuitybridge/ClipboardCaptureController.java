@@ -1,116 +1,108 @@
 package com.froglike6.continuitybridge;
 
-import android.Manifest;
 import android.content.ClipData;
-import android.content.ClipboardManager;
 import android.content.Context;
-import android.content.Intent;
-import android.content.pm.PackageManager;
-import android.os.Build;
-import android.provider.Settings;
-import java.io.BufferedReader;
 import java.io.IOException;
-import java.io.InputStreamReader;
 import java.util.UUID;
+import java.util.concurrent.ArrayBlockingQueue;
+import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.ThreadFactory;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 
 final class ClipboardCaptureController {
-    private static final String TAG = "ContinuityBridge";
-    static final String EXTRA_OBSERVATION_ID = "com.froglike6.continuitybridge.OBSERVATION_ID";
-    static final OverlayRequestGate OVERLAY_GATE = new OverlayRequestGate();
     private final Context context;
-    private final ClipboardManager clipboard;
     private final DurableOutbox outbox;
-    private final ClipboardManager.OnPrimaryClipChangedListener listener;
+    private final ShizukuClipboardClient client;
+    private final String epoch = UUID.randomUUID().toString();
+    private final AtomicLong sequence = new AtomicLong();
     private volatile boolean stopping;
-    private Process logcat;
-    private Thread reader;
-    private final String observationEpoch = UUID.randomUUID().toString();
-    private final AtomicLong observationSequence = new AtomicLong();
-    private volatile String lastObservationIdentity;
+    private final ThreadPoolExecutor captures = new ThreadPoolExecutor(1, 1, 0, TimeUnit.MILLISECONDS,
+            new ArrayBlockingQueue<Runnable>(1), new ThreadFactory() {
+                @Override public Thread newThread(Runnable runnable) {
+                    Thread thread = new Thread(runnable, "continuity-clipboard-capture");
+                    thread.setDaemon(true);
+                    return thread;
+                }
+            }, new ThreadPoolExecutor.DiscardOldestPolicy());
+    private final ShizukuClipboardClient.Listener listener = new ShizukuClipboardClient.Listener() {
+        @Override public void onClip(ClipData clip) {
+            capture(clip, "shizuku:" + epoch + ":" + sequence.incrementAndGet());
+        }
+
+        @Override public void onState(ShizukuClipboardClient.State state) {
+            if (stopping) return;
+            MetadataLog.clipboardMonitor("shizuku_" + state.name());
+            new ConfigStore(context).clipboardCapability(capability(state));
+        }
+    };
 
     ClipboardCaptureController(Context context, DurableOutbox outbox) {
-        this.context = context; this.outbox = outbox;
-        clipboard = context.getSystemService(ClipboardManager.class);
-        listener = new ClipboardManager.OnPrimaryClipChangedListener() {
-            @Override public void onPrimaryClipChanged() {
-                if (stopping) return;
-                String identity = "callback:" + observationEpoch + ":" + observationSequence.incrementAndGet();
-                lastObservationIdentity = identity;
-                capture(identity);
-            }
-        };
+        this.context = context.getApplicationContext();
+        this.outbox = outbox;
+        client = ShizukuClipboardClient.get(this.context);
     }
 
     void start() {
-        clipboard.addPrimaryClipChangedListener(listener); stopping = false;
-        if (Build.VERSION.SDK_INT > 28 && context.checkSelfPermission(Manifest.permission.READ_LOGS) != PackageManager.PERMISSION_GRANTED) {
-            new ConfigStore(context).clipboardCapability("READ_LOGS 권한 필요"); return;
-        }
-        reader = new Thread(new Runnable() { @Override public void run() { readDenials(); } }, "continuity-clipboard-logcat");
-        reader.start(); new ConfigStore(context).clipboardCapability("감지 준비됨");
+        stopping = false;
+        client.start(listener);
     }
 
     void stop() {
-        synchronized (this) {
-            stopping = true;
-            if (logcat != null) logcat.destroy();
-        }
-        clipboard.removePrimaryClipChangedListener(listener);
-        if (reader != null) reader.interrupt();
+        stopping = true;
+        client.stop(listener);
+        captures.shutdownNow();
     }
 
-    CaptureResult capture(String fallbackIdentity) {
+    CaptureResult capture(ClipData clip, String identity) {
+        if (stopping) return CaptureResult.UNAVAILABLE;
+        final ClipboardObservation observation = ClipboardObservation.fromShizuku(clip, identity);
+        if (observation == null) return CaptureResult.INVALID;
         try {
-            ClipData clip = clipboard.getPrimaryClip();
-            if (clip == null || clip.getItemCount() != 1) return CaptureResult.INVALID;
-            CharSequence value = clip.getItemAt(0).getText(); if (value == null) return CaptureResult.INVALID;
-            long timestamp = clip.getDescription().getTimestamp();
-            String identity = timestamp == 0 ? fallbackIdentity : "timestamp:" + timestamp;
-            String marker = AndroidClipboardApplier.marker(clip.getDescription());
-            return outbox.captureClipboard(value.toString(), marker, identity, System.currentTimeMillis());
-        } catch (SecurityException error) {
-            outbox.observeUnavailableCallback(fallbackIdentity);
+            captures.execute(new Runnable() {
+                @Override public void run() { capture(observation); }
+            });
+            return CaptureResult.PENDING;
+        } catch (RejectedExecutionException stopped) {
+            if (!stopping) reportFailure("클립보드 저장 대기 중");
             return CaptureResult.UNAVAILABLE;
         }
     }
 
-    static CaptureResult captureOverlay(Context context, String observationIdentity) {
-        try { return BridgeRepository.get(context).outbox() == null ? CaptureResult.UNAVAILABLE
-                : new ClipboardCaptureController(context, BridgeRepository.get(context).outbox()).capture(observationIdentity); }
-        catch (IOException error) { return CaptureResult.UNAVAILABLE; }
-    }
-
-    private void readDenials() {
-        Process process = null;
+    private void capture(ClipboardObservation observation) {
+        if (stopping || Thread.currentThread().isInterrupted()) return;
         try {
-            process = new ProcessBuilder("logcat", "-v", "brief", "-T", "1", "ClipboardService:E", "*:S").redirectErrorStream(true).start();
-            synchronized (this) {
-                logcat = process;
-                if (stopping) return;
-            }
-            try (BufferedReader lines = new BufferedReader(new InputStreamReader(process.getInputStream()))) {
-                String line; while (!stopping && (line = lines.readLine()) != null) if (ClipboardDenialMatcher.matches(line, context.getPackageName())) requestOverlay();
-            }
-        } catch (IOException error) { if (!stopping) new ConfigStore(context).clipboardCapability("로그 감지 실패"); }
-        finally {
-            if (process != null) process.destroy();
-            synchronized (this) { if (logcat == process) logcat = null; }
+            ClipboardContent content = observation.content(context);
+            if (stopping || Thread.currentThread().isInterrupted()) return;
+            CaptureResult result = outbox.captureContent(content, observation.marker, observation.identity,
+                    observation.capturedAtMs, observation.remote);
+            MetadataLog.clipboardMonitor("shizuku_capture_" + result.name());
+            if (stopping || client.getState() != ShizukuClipboardClient.State.READY) return;
+            if (result == CaptureResult.ENQUEUED) new ConfigStore(context).clipboardCapability(
+                    content.isImage() ? "이미지 복사 공유 준비됨" : "복사 공유 준비됨");
+            else if (result == CaptureResult.UNAVAILABLE) reportFailure("클립보드 저장 실패");
+        } catch (IOException | RuntimeException error) {
+            MetadataLog.clipboardMonitor("shizuku_capture_failed");
+            reportFailure(observation.isImage() ? ClipboardImageReader.status(error) : "복사 내용을 읽지 못했어요");
         }
     }
 
-    private void requestOverlay() {
-        if (stopping) return;
-        String candidate = lastObservationIdentity;
-        if (candidate == null) candidate = "denial:" + observationEpoch + ":" + observationSequence.incrementAndGet();
-        requestOverlay(context, candidate);
+    private void reportFailure(String message) {
+        if (!stopping && client.getState() == ShizukuClipboardClient.State.READY)
+            new ConfigStore(context).clipboardCapability(message);
     }
 
-    static void requestOverlay(Context context, String candidate) {
-        if (!Settings.canDrawOverlays(context)) { new ConfigStore(context).clipboardCapability("다른 앱 위 표시 권한 필요"); return; }
-        String identity = OVERLAY_GATE.begin(candidate); if (identity == null) return;
-        Intent intent = new Intent(context, ClipboardOverlayActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK
-                | Intent.FLAG_ACTIVITY_EXCLUDE_FROM_RECENTS | Intent.FLAG_ACTIVITY_NO_ANIMATION).putExtra(EXTRA_OBSERVATION_ID, identity);
-        try { context.startActivity(intent); } catch (RuntimeException error) { OVERLAY_GATE.complete(identity); new ConfigStore(context).clipboardCapability("오버레이 시작 실패"); }
+    private static String capability(ShizukuClipboardClient.State state) {
+        switch (state) {
+            case MISSING: return "클립보드 도우미는 Android 11 이상이 필요합니다";
+            case NOT_RUNNING: return "클립보드 도우미 연결을 확인해 주세요";
+            case PERMISSION_REQUIRED: return "클립보드 도우미 최초 연결이 필요합니다";
+            case CONNECTING: return "클립보드 도우미 연결 중";
+            case READY: return "복사 공유 준비됨";
+            case ERROR: return "클립보드 도우미를 다시 연결해 주세요";
+            case STOPPED: return "복사 공유 중지됨";
+            default: throw new IllegalStateException("unknown_shizuku_state");
+        }
     }
 }

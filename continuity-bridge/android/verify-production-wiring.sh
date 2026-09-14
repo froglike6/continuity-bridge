@@ -1,6 +1,6 @@
 #!/bin/sh
 set -eu
-CLASSES=${1:-continuity-bridge/android/build/android/classes}
+CLASSES=${1:-continuity-bridge/android/build/shizuku/classes}
 JAVAP="/Applications/Android Studio.app/Contents/jbr/Contents/Home/bin/javap"
 SERVICE=com.froglike6.continuitybridge.BridgeService
 DUMP=$("$JAVAP" -classpath "$CLASSES" -c -p "$SERVICE")
@@ -13,6 +13,19 @@ fi
 APPLIER=$("$JAVAP" -classpath "$CLASSES" -c -p com.froglike6.continuitybridge.AndroidClipboardApplier)
 printf '%s\n' "$APPLIER" | grep -Fq 'ClipboardManager.setPrimaryClip' || { echo 'APPLIER_WIRING_MISSING=setPrimaryClip' >&2; exit 1; }
 printf '%s\n' "$APPLIER" | grep -Fq 'ClipboardApplyTransaction.apply' || { echo 'APPLIER_WIRING_MISSING=ClipboardApplyTransaction.apply' >&2; exit 1; }
+printf '%s\n' "$APPLIER" | grep -Fq 'ShizukuClipboardClient.read' || { echo 'APPLIER_WIRING_MISSING=ShizukuClipboardClient.read' >&2; exit 1; }
+CAPTURE=$("$JAVAP" -classpath "$CLASSES" -c -p com.froglike6.continuitybridge.ClipboardCaptureController)
+printf '%s\n' "$CAPTURE" | grep -Fq 'ShizukuClipboardClient.start' || { echo 'CAPTURE_WIRING_MISSING=ShizukuClipboardClient.start' >&2; exit 1; }
+printf '%s\n' "$CAPTURE" | grep -Fq 'ShizukuClipboardClient.stop' || { echo 'CAPTURE_WIRING_MISSING=ShizukuClipboardClient.stop' >&2; exit 1; }
+for adapter in AndroidClipboardApplier ClipboardCaptureController ShizukuClipboard; do
+    find "$CLASSES/com/froglike6/continuitybridge" -name "$adapter*.class" -print | while IFS= read -r class_file; do
+        class_name=$(basename "$class_file" .class)
+        ADAPTER_DUMP=$("$JAVAP" -classpath "$CLASSES" -c -p "com.froglike6.continuitybridge.$class_name")
+        if printf '%s\n' "$ADAPTER_DUMP" | grep -Eq 'ClipboardOverlayActivity|android/view/WindowManager|\.startActivity|java/lang/ProcessBuilder|java/lang/Runtime.exec|String logcat'; then
+            echo "CLIPBOARD_FORBIDDEN_BYTECODE=$class_name" >&2; exit 1
+        fi
+    done
+done
 TRANSACTION=$("$JAVAP" -classpath "$CLASSES" -c -p com.froglike6.continuitybridge.ClipboardApplyTransaction)
 printf '%s\n' "$TRANSACTION" | grep -Fq 'BridgeState.markRemoteApply' || { echo 'APPLIER_WIRING_MISSING=markRemoteApply' >&2; exit 1; }
 MIRROR=$("$JAVAP" -classpath "$CLASSES" -c -p com.froglike6.continuitybridge.NotificationMirrorService)
@@ -25,4 +38,4 @@ printf '%s\n' "$ATOMIC" | grep -Fq '(Ljava/nio/file/Path;Lcom/froglike6/continui
 if printf '%s\n' "$ATOMIC" | grep -Fq 'AtomicStateFile(java.nio.file.Path);'; then
     echo 'PLAINTEXT_STATE_CONSTRUCTOR_PRESENT' >&2; exit 1
 fi
-echo 'PRODUCTION_WIRING_OK service=BridgeService engine=BridgeEngine durable=BridgeRepository clipboard=ClipboardCaptureController applier=AndroidClipboardApplier notification=NotificationMirrorService cancellation=BridgeEngine.cancel'
+echo 'PRODUCTION_WIRING_OK service=BridgeService engine=BridgeEngine durable=BridgeRepository clipboard=ShizukuClipboardClient applier=AndroidClipboardApplier notification=NotificationMirrorService cancellation=BridgeEngine.cancel focus_fallback=absent'

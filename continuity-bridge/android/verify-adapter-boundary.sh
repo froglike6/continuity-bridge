@@ -19,9 +19,14 @@ test -s "$APK" || fail apk_missing
 case "$MODE" in
 production)
     APPLIER="$SOURCE/java/com/froglike6/continuitybridge/AndroidClipboardApplier.java"
-    OVERLAY="$SOURCE/java/com/froglike6/continuitybridge/ClipboardOverlayActivity.java"
+    CAPTURE="$SOURCE/java/com/froglike6/continuitybridge/ClipboardCaptureController.java"
     test -s "$APPLIER" || fail applier_source_missing
-    test -s "$OVERLAY" || fail overlay_source_missing
+    test -s "$CAPTURE" || fail capture_source_missing
+    test ! -e "$SOURCE/java/com/froglike6/continuitybridge/ClipboardOverlayActivity.java" || fail legacy_overlay_source_present
+    for adapter in "$APPLIER" "$CAPTURE" "$SOURCE"/java/com/froglike6/continuitybridge/ShizukuClipboard*.java; do
+        test -s "$adapter" || fail shizuku_source_missing
+        grep -Eq 'ClipboardOverlayActivity|WindowManager|startActivity|ProcessBuilder|READ_LOGS|SYSTEM_ALERT_WINDOW|"logcat"' "$adapter" && fail clipboard_focus_or_process_source
+    done
     contains_tree 'package com.froglike6.continuityfixture' "$SOURCE" && fail fixture_package_in_production_source
     find "$SOURCE" -type f | grep -Eqi '(^|/)[^/]*fixture[^/]*$' && fail fixture_named_source_or_resource
     find "$CLASSES" -type f | grep -Fq '/com/froglike6/continuityfixture/' && fail fixture_class_in_production_classes
@@ -34,18 +39,19 @@ production)
     printf '%s\n' "$APPLIER_DUMP" | grep -Fq 'PersistableBundle.putString' || fail event_id_put_bytecode_missing
     printf '%s\n' "$APPLIER_DUMP" | grep -Fq 'ClipDescription.setExtras' || fail clip_description_extras_bytecode_missing
 
-    grep -Fq 'WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY' "$OVERLAY" || fail overlay_type_source_missing
-    grep -Fq 'setFocusableInTouchMode(true)' "$OVERLAY" || fail overlay_focusable_source_missing
-    grep -Fq 'overlay.requestFocus()' "$OVERLAY" || fail overlay_request_focus_source_missing
-    grep -Eq 'FLAG_NOT_FOCUSABLE|FLAG_ALT_FOCUSABLE_IM|setFocusable(InTouchMode)?\(false\)|clearFocus\(' "$OVERLAY" && fail overlay_focus_breaking_source
-    OVERLAY_DUMP=$("$JAVAP" -classpath "$CLASSES" -c -p com.froglike6.continuitybridge.ClipboardOverlayActivity)
-    printf '%s\n' "$OVERLAY_DUMP" | grep -Fq 'View.setFocusableInTouchMode' || fail overlay_focusable_bytecode_missing
-    printf '%s\n' "$OVERLAY_DUMP" | grep -Fq 'View.requestFocus' || fail overlay_request_focus_bytecode_missing
+    grep -Fq 'ShizukuClipboardClient' "$CAPTURE" || fail shizuku_capture_source_missing
+    grep -Fq 'ShizukuClipboardClient' "$APPLIER" || fail shizuku_applier_source_missing
+    test ! -e "$CLASSES/com/froglike6/continuitybridge/ClipboardOverlayActivity.class" || fail legacy_overlay_class_present
 
-    defined_classes "$APK" | grep -Fq 'com.froglike6.continuityfixture' && fail fixture_class_in_production_dex
-    defined_classes "$APK" | grep -Ev '^com\.froglike6\.continuitybridge(\.|$)' | grep -q . && fail foreign_class_in_production_dex
+    DEX_CLASSES=$(defined_classes "$APK")
+    printf '%s\n' "$DEX_CLASSES" | grep -Fq 'com.froglike6.continuityfixture' && fail fixture_class_in_production_dex
+    printf '%s\n' "$DEX_CLASSES" | grep -Fq 'ClipboardOverlayActivity' && fail legacy_overlay_dex_present
+    printf '%s\n' "$DEX_CLASSES" | grep -Ev '^(com\.froglike6\.continuitybridge|io\.github\.muntashirakon\.(adb|crypto\.spake2)|org\.(bouncycastle|conscrypt))(\.|$)' | grep -q . && fail foreign_class_in_production_dex
+    printf '%s\n' "$DEX_CLASSES" | grep -Fxq 'com.froglike6.continuitybridge.ClipboardHelperProvider' || fail helper_provider_dex_missing
+    printf '%s\n' "$DEX_CLASSES" | grep -Fxq 'com.froglike6.continuitybridge.ClipboardHelperMain' || fail helper_main_dex_missing
+    printf '%s\n' "$DEX_CLASSES" | grep -Eq '^(rikka\.shizuku|rikka\.sui|moe\.shizuku)(\.|$)' && fail external_manager_sdk_present
     /usr/bin/unzip -l "$APK" | grep -Eqi 'fixture' && fail fixture_resource_in_production_apk
-    echo 'ADAPTER_BOUNDARY_OK mode=production marker=source+bytecode focus=source+bytecode fixture_separation=source+classes+dex+apk'
+    echo 'ADAPTER_BOUNDARY_OK mode=production marker=source+bytecode capture=embedded-helper external_manager=absent legacy_overlay=absent fixture_separation=source+classes+dex+apk'
     ;;
 fixture)
     MANIFEST="$SOURCE/main/AndroidManifest.xml"
