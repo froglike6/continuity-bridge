@@ -1,0 +1,14 @@
+{
+  "protocolVersion": 1,
+  "eventId": "evt-android-image-001",
+  "originDeviceId": "device-android-fixture",
+  "originRole": "android",
+  "originEpoch": "epoch-android-fixture-a",
+  "sequence": 1,
+  "kind": "clipboard.image",
+  "createdAtMs": 1700000000000,
+  "payload": {
+    "mimeType": "image/png",
+    "dataBase64": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jkWQAAAAASUVORK5CYII="
+  }
+}

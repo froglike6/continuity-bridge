@@ -154,6 +154,28 @@
       ]
     },
     {
+      "name": "image clipboard directions validation and shared latest register",
+      "capabilities": ["image_bidirectional", "clipboard_cross_kind_supersession", "image_signature"],
+      "steps": [
+        {"op":"publish","actorRole":"android","fixture":"android-image.json","expect":{"status":201,"cursor":"1"}},
+        {"op":"fetch","actorRole":"macos","after":"0","waitMs":0,"expect":{"status":200,"eventIds":["evt-android-image-001"],"nextCursor":"1"}},
+        {"op":"publish","actorRole":"android","fixture":"android-clipboard.json","set":{"sequence":2},"expect":{"status":201,"cursor":"2"}},
+        {"op":"fetch","actorRole":"macos","after":"0","waitMs":0,"expect":{"status":200,"eventIds":["evt-android-clip-001"],"nextCursor":"2"}},
+        {"op":"publish","actorRole":"macos","fixture":"android-image.json","set":{"originRole":"macos","originDeviceId":"device-macos-fixture","eventId":"evt-macos-image-001"},"expect":{"status":201,"cursor":"3"}},
+        {"op":"publish","actorRole":"android","fixture":"android-image.json","set":{"payload.mimeType":"image/jpeg"},"expect":{"status":400,"code":"invalid_event"}}
+      ]
+    },
+    {
+      "name": "notification metadata typed normalization and invalid progress",
+      "capabilities": ["notification_metadata", "notification_progress_validation", "notification_metadata_normalization"],
+      "steps": [
+        {"op":"publish","actorRole":"android","fixture":"android-notification.json","set":{"payload.progress":{"value":1,"max":10,"indeterminate":false},"payload.isOngoing":true,"payload.isRedacted":false,"payload.category":"progress"},"expect":{"status":201,"cursor":"1"}},
+        {"op":"publish","actorRole":"android","fixture":"android-notification.json","set":{"payload.progress":{"value":1,"max":10,"indeterminate":false,"future":42},"payload.isOngoing":true,"payload.isRedacted":false,"payload.category":"progress"},"expect":{"status":200,"cursor":"1","idempotent":true}},
+        {"op":"publish","actorRole":"android","fixture":"android-notification.json","set":{"payload.progress":{"value":1,"max":0,"indeterminate":true}},"expect":{"status":400,"code":"invalid_event"}},
+        {"op":"publish","actorRole":"android","fixture":"android-notification.json","set":{"payload.isOngoing":"true"},"expect":{"status":400,"code":"invalid_event"}}
+      ]
+    },
+    {
       "name": "wall-clock metadata never determines acceptance order",
       "capabilities": [
         "no_wall_clock_ordering"

@@ -2,17 +2,20 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { knownPayload, payloadStatus } from "./contract-payloads.mjs";
 
 const LIMITS = Object.freeze({
   clipboardBytes: 1_048_576,
-  eventBodyBytes: 1_114_112,
+  eventBodyBytes: 12_582_912,
+  responseBodyBytes: 12_582_912,
   notificationPayloadBytes: 81_920,
   notificationRetainedBytes: 524_288,
   notificationCount: 100,
   notificationTtlMs: 900_000,
 });
 const ROLES = new Set(["android", "macos"]);
-const KINDS = new Set(["clipboard.text", "android.notification"]);
+const KINDS = new Set(["clipboard.text", "clipboard.image", "android.notification"]);
+const isClipboard = (kind) => kind === "clipboard.text" || kind === "clipboard.image";
 const REQUIRED_CAPABILITIES = Object.freeze([
   "role_acl_android_publish_clipboard",
   "role_acl_android_publish_notification",
@@ -41,6 +44,12 @@ const REQUIRED_CAPABILITIES = Object.freeze([
   "ack_timing",
   "unknown_field_opacity",
   "no_wall_clock_ordering",
+  "image_bidirectional",
+  "clipboard_cross_kind_supersession",
+  "image_signature",
+  "notification_metadata",
+  "notification_progress_validation",
+  "notification_metadata_normalization",
 ]);
 const REQUIRED_CAPABILITY_SET = new Set(REQUIRED_CAPABILITIES);
 const utf8Bytes = (value) => Buffer.byteLength(value, "utf8");
@@ -62,15 +71,7 @@ function knownEvent(event) {
     createdAtMs: event.createdAtMs,
   };
   if (event.expiresAtMs !== undefined) envelope.expiresAtMs = event.expiresAtMs;
-  envelope.payload = event.kind === "clipboard.text"
-    ? { text: event.payload?.text }
-    : {
-        notificationKey: event.payload?.notificationKey,
-        packageName: event.payload?.packageName,
-        appLabel: event.payload?.appLabel,
-        title: event.payload?.title,
-        body: event.payload?.body,
-      };
+  envelope.payload = knownPayload(event.kind, event.payload);
   return envelope;
 }
 
@@ -96,23 +97,12 @@ function validateEvent(actorRole, event) {
     return error(400, "invalid_event");
   }
   if (actorRole !== event.originRole) return error(403, "identity_mismatch");
-  if (actorRole === "macos" && event.kind !== "clipboard.text") return error(403, "direction_forbidden");
+  if (actorRole === "macos" && !isClipboard(event.kind)) return error(403, "direction_forbidden");
   if (event.payload === null || Array.isArray(event.payload) || typeof event.payload !== "object") {
     return error(400, "invalid_event");
   }
-  if (event.kind === "clipboard.text") {
-    if (typeof event.payload.text !== "string") return error(400, "invalid_event");
-    if (utf8Bytes(event.payload.text) > LIMITS.clipboardBytes) return error(413, "payload_too_large");
-  } else {
-    const fields = [["notificationKey", 4096], ["packageName", 255], ["appLabel", 4096], ["title", 8192], ["body", 65536]];
-    for (const [field, limit] of fields) {
-      if (typeof event.payload[field] !== "string") return error(400, "invalid_event");
-      if (utf8Bytes(event.payload[field]) > limit) return error(413, "payload_too_large");
-    }
-    if (utf8Bytes(JSON.stringify(knownEvent(event).payload)) > LIMITS.notificationPayloadBytes) {
-      return error(413, "payload_too_large");
-    }
-  }
+  const payload = payloadStatus(event.kind, event.payload);
+  if (payload.status !== 0) return payload;
   return { status: 0, event: knownEvent(event) };
 }
 
@@ -180,16 +170,16 @@ class ContractStore {
     this.bySequence.set(sequenceKey, identity);
     this.highWater.set(originKey, event.sequence);
     const destination = event.originRole === "android" ? "macos" : "android";
-    if (event.kind === "clipboard.text") {
+    if (isClipboard(event.kind)) {
       for (const [oldCursor, record] of this.retained) {
-        if (record.destination === destination && record.event.kind === "clipboard.text") this.retained.delete(oldCursor);
+        if (record.event.originDeviceId === event.originDeviceId && isClipboard(record.event.kind)) this.retained.delete(oldCursor);
       }
     }
     const requestedDeadline = event.expiresAtMs ?? Number.MAX_SAFE_INTEGER;
     this.retained.set(cursor, {
       event,
       destination,
-      deadlineMs: Math.min(this.nowMs + LIMITS.notificationTtlMs, requestedDeadline),
+      deadlineMs: event.kind === "android.notification" ? Math.min(this.nowMs + LIMITS.notificationTtlMs, requestedDeadline) : null,
       bytes: utf8Bytes(JSON.stringify(event)),
     });
     this.expireAndBound();
@@ -204,11 +194,24 @@ class ContractStore {
     const records = [...this.retained.entries()]
       .filter(([cursor, record]) => record.destination === actorRole && Number(cursor) > afterNumber)
       .sort((left, right) => Number(left[0]) - Number(right[0]));
+    let nextCursor = String(this.tailCursor);
+    let length = utf8Bytes(JSON.stringify({ status: 200, protocolVersion: 1, serverEpoch: this.serverEpoch,
+      after, nextCursor, events: [] }));
+    const selected = [];
+    for (const [cursor, record] of records) {
+      const entryBytes = utf8Bytes(JSON.stringify({ cursor, ...record })) + (selected.length ? 1 : 0);
+      if (length + entryBytes > LIMITS.responseBodyBytes) {
+        nextCursor = selected.at(-1)?.[0] ?? after;
+        break;
+      }
+      selected.push([cursor, record]); length += entryBytes;
+    }
     return {
       status: 200,
-      eventIds: records.map(([, record]) => record.event.eventId),
-      nextCursor: String(this.tailCursor),
-      payloadText: records[0]?.[1].event.payload.text,
+      eventIds: selected.map(([, record]) => record.event.eventId),
+      nextCursor,
+      payloadText: selected[0]?.[1].event.payload.text,
+      payload: selected[0]?.[1].event.payload,
     };
   }
 
